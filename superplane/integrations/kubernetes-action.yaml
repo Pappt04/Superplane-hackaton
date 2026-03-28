@@ -1,0 +1,202 @@
+name: "Kubernetes Action Integration"
+description: |
+  HTTP actions that call the Kubernetes API server to perform actual service operations:
+  restart (rollout), rollback (previous revision), and scale (replica count).
+  Replaces the mock implementations in src/agent/incident-investigator.ts
+  with real Kubernetes REST API calls.
+
+  Authentication: Bearer token from a service account with permissions:
+    - deployments: get, patch
+    - deployments/scale: patch
+    - replicasets: list (needed for rollback)
+  Set KUBE_API_URL and KUBE_TOKEN in environment.
+
+# ─────────────────────────────────────────────────────────────
+# ACTION 1: RESTART (rollout restart)
+# Equivalent to: kubectl rollout restart deployment/<service> -n <namespace>
+# Kubernetes has no direct "restart" endpoint — patching the annotation
+# triggers a rolling update which recycles all pods.
+# ─────────────────────────────────────────────────────────────
+restart_action:
+  superplane_component:
+    name: "Restart Service (Kubernetes)"
+    type: "TYPE_COMPONENT"
+    component:
+      name: "http"
+    configuration:
+      method: "PATCH"
+      url: "{{ env.KUBE_API_URL }}/apis/apps/v1/namespaces/{{ env.KUBE_NAMESPACE }}/deployments/{{ service }}"
+      successCodes: "2xx"
+      timeoutSeconds: 30
+      headers:
+        Content-Type: "application/strategic-merge-patch+json"
+        Authorization: "Bearer {{ env.KUBE_TOKEN }}"
+      body: |
+        {
+          "spec": {
+            "template": {
+              "metadata": {
+                "annotations": {
+                  "kubectl.kubernetes.io/restartedAt": "{{ $now }}"
+                }
+              }
+            }
+          }
+        }
+
+  request_example:
+    url: "https://kube.internal:6443/apis/apps/v1/namespaces/production/deployments/payment-service"
+    body:
+      spec:
+        template:
+          metadata:
+            annotations:
+              kubectl.kubernetes.io/restartedAt: "2026-03-28T10:05:00Z"
+
+  response_shape:
+    # Kubernetes returns the full updated Deployment object
+    # Check: .status.conditions[] where type == "Progressing"
+    kind: "Deployment"
+    metadata:
+      name: "payment-service"
+      namespace: "production"
+    status:
+      conditions:
+        - type: "Progressing"
+          status: "True"
+          reason: "ReplicaSetUpdated"
+
+  superplane_expression_success:
+    expression: '$["Restart Service (Kubernetes)"].data.body.status.conditions[0].type == "Progressing"'
+
+# ─────────────────────────────────────────────────────────────
+# ACTION 2: ROLLBACK (rollout undo to previous revision)
+# Equivalent to: kubectl rollout undo deployment/<service> -n <namespace>
+# Patches the deployment to restore the previous ReplicaSet template.
+# ─────────────────────────────────────────────────────────────
+rollback_action:
+  superplane_component:
+    name: "Rollback Deployment (Kubernetes)"
+    type: "TYPE_COMPONENT"
+    component:
+      name: "http"
+    configuration:
+      method: "PATCH"
+      url: "{{ env.KUBE_API_URL }}/apis/apps/v1/namespaces/{{ env.KUBE_NAMESPACE }}/deployments/{{ service }}"
+      successCodes: "2xx"
+      timeoutSeconds: 30
+      headers:
+        Content-Type: "application/strategic-merge-patch+json"
+        Authorization: "Bearer {{ env.KUBE_TOKEN }}"
+      body: |
+        {
+          "spec": {
+            "template": {
+              "metadata": {
+                "annotations": {
+                  "deployment.kubernetes.io/revision": "{{ previous_revision }}"
+                }
+              }
+            }
+          }
+        }
+
+  # To get the previous revision number, call first:
+  # GET /apis/apps/v1/namespaces/{ns}/replicasets?labelSelector=app={service}
+  # Sort by .metadata.annotations["deployment.kubernetes.io/revision"] descending
+  # Take the second entry (index 1) — that is the previous revision.
+  get_previous_revision:
+    superplane_component:
+      name: "Get Previous Revision"
+      type: "TYPE_COMPONENT"
+      component:
+        name: "http"
+      configuration:
+        method: "GET"
+        url: "{{ env.KUBE_API_URL }}/apis/apps/v1/namespaces/{{ env.KUBE_NAMESPACE }}/replicasets?labelSelector=app={{ service }}"
+        successCodes: "2xx"
+        timeoutSeconds: 10
+        headers:
+          Authorization: "Bearer {{ env.KUBE_TOKEN }}"
+
+  request_example:
+    url: "https://kube.internal:6443/apis/apps/v1/namespaces/production/deployments/payment-service"
+    body:
+      spec:
+        template:
+          metadata:
+            annotations:
+              deployment.kubernetes.io/revision: "4"
+
+  response_shape:
+    kind: "Deployment"
+    metadata:
+      name: "payment-service"
+      namespace: "production"
+    status:
+      conditions:
+        - type: "Progressing"
+          status: "True"
+          reason: "ReplicaSetUpdated"
+
+# ─────────────────────────────────────────────────────────────
+# ACTION 3: SCALE (change replica count)
+# Equivalent to: kubectl scale deployment/<service> --replicas=<n> -n <namespace>
+# ─────────────────────────────────────────────────────────────
+scale_action:
+  superplane_component:
+    name: "Scale Service (Kubernetes)"
+    type: "TYPE_COMPONENT"
+    component:
+      name: "http"
+    configuration:
+      method: "PATCH"
+      url: "{{ env.KUBE_API_URL }}/apis/apps/v1/namespaces/{{ env.KUBE_NAMESPACE }}/deployments/{{ service }}/scale"
+      successCodes: "2xx"
+      timeoutSeconds: 15
+      headers:
+        Content-Type: "application/merge-patch+json"
+        Authorization: "Bearer {{ env.KUBE_TOKEN }}"
+      body: |
+        {
+          "spec": {
+            "replicas": {{ replicas }}
+          }
+        }
+
+  request_example:
+    url: "https://kube.internal:6443/apis/apps/v1/namespaces/production/deployments/payment-service/scale"
+    body:
+      spec:
+        replicas: 5
+
+  response_shape:
+    kind: "Scale"
+    spec:
+      replicas: 5
+    status:
+      replicas: 3         # current (still scaling up)
+      selector: "app=payment-service"
+
+# ─────────────────────────────────────────────────────────────
+# ENVIRONMENT VARIABLES REQUIRED
+# Add these to .env and docker-compose.yml
+# ─────────────────────────────────────────────────────────────
+required_env:
+  KUBE_API_URL: "https://your-cluster-api:6443"       # kubectl cluster-info
+  KUBE_TOKEN: "eyJhbGciOiJSUzI1NiIs..."               # service account token
+  KUBE_NAMESPACE: "production"                          # target namespace
+
+# How to get a service account token:
+#   kubectl create serviceaccount superplane -n production
+#   kubectl create clusterrolebinding superplane \
+#     --clusterrole=edit --serviceaccount=production:superplane
+#   kubectl create token superplane -n production
+
+notes:
+  - "KUBE_API_URL is the internal cluster endpoint — agent must run inside the cluster or have network access"
+  - "For in-cluster deployment, KUBE_TOKEN and KUBE_API_URL are auto-mounted at /var/run/secrets/kubernetes.io/serviceaccount"
+  - "Restart uses strategic-merge-patch to update only the annotation; Kubernetes detects the change and rolls pods"
+  - "Rollback requires fetching the previous ReplicaSet revision first — add a 'Get Previous Revision' node before the rollback node in the workflow"
+  - "Scale uses merge-patch on the /scale subresource — simpler and more targeted than patching the full Deployment"
+  - "All three actions trigger a Deployment rollout — poll GET /status.conditions until type=Available and status=True to confirm completion"
