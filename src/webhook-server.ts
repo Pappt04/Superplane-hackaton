@@ -74,9 +74,55 @@ function normalizeGrafanaAlert(body: Record<string, unknown>): Alert | null {
   return null;
 }
 
+async function triggerAgentDirectly(alert: Alert): Promise<void> {
+  const incidentId = `inc-${Date.now()}`;
+
+  postToDashboard({ type: "INVESTIGATION_STARTED", incidentId, alert, timestamp: new Date().toISOString() });
+
+  try {
+    const [logs, metrics, deployments] = await Promise.all([
+      getLogs(alert.service, 30),
+      getMetrics(alert.service),
+      getRecentDeployments(alert.service, 24),
+    ]);
+
+    const body = JSON.stringify({ alert, context: { logs, metrics, deployments } } satisfies InvestigationRequest);
+    const url = new URL(`${AGENT_URL}/agent/investigate`);
+
+    const result = await new Promise<InvestigationResult>((resolve, reject) => {
+      const req = http.request(
+        { hostname: url.hostname, port: url.port || 3001, path: url.pathname, method: "POST",
+          headers: { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(body) },
+          timeout: 120_000 },
+        (res) => {
+          let data = "";
+          res.on("data", (c) => { data += c; });
+          res.on("end", () => {
+            try { resolve(JSON.parse(data)); }
+            catch { reject(new Error("Invalid JSON from agent")); }
+          });
+        }
+      );
+      req.on("error", reject);
+      req.on("timeout", () => reject(new Error("Agent timeout")));
+      req.write(body);
+      req.end();
+    });
+
+    const type = result.fix_applied ? "INCIDENT_RESOLVED" : "INCIDENT_ESCALATED";
+    postToDashboard({ type, incidentId, alert, result, timestamp: new Date().toISOString() });
+    console.log(`[AGENT] ${type} — fix_applied: ${result.fix_applied}`);
+  } catch (err) {
+    const error = err instanceof Error ? err.message : String(err);
+    postToDashboard({ type: "INVESTIGATION_FAILED", incidentId, alert, error, timestamp: new Date().toISOString() });
+    console.error("[AGENT] Investigation failed:", error);
+  }
+}
+
 async function triggerSuperPlane(alert: Alert): Promise<void> {
   if (!SUPERPLANE_TRIAGE_WEBHOOK_URL) {
-    console.log("[INFO] SUPERPLANE_TRIAGE_WEBHOOK_URL not set — skipping SuperPlane trigger");
+    console.log("[INFO] SUPERPLANE_TRIAGE_WEBHOOK_URL not set — calling agent directly (fallback)");
+    triggerAgentDirectly(alert);
     return;
   }
   const url = new URL(SUPERPLANE_TRIAGE_WEBHOOK_URL);
@@ -236,30 +282,45 @@ app.get("/health", (_req: Request, res: Response) => {
 // ─── Helpers (async) ──────────────────────────────────────────────────────────
 
 async function triggerEscalation(payload: { alert: Alert; result: InvestigationResult }): Promise<void> {
-  const body = JSON.stringify({
-    service: payload.alert.service,
-    root_cause: payload.result.root_cause,
-    actions_taken: payload.result.actions_taken,
-    proposed_fix: payload.result.proposed_fix,
-    confidence: payload.result.confidence,
-    full_timeline: payload.result.full_timeline,
-  });
-
-  const ESCALATION_URL = process.env.SUPERPLANE_ESCALATION_WEBHOOK_URL || "";
-  if (!ESCALATION_URL) {
-    console.log("[INFO] SUPERPLANE_ESCALATION_WEBHOOK_URL not set — logging escalation locally");
-    console.log("[ESCALATION]", body);
+  const DISCORD_URL = process.env.DISCORD_WEBHOOK_URL || "";
+  if (!DISCORD_URL) {
+    console.log("[INFO] DISCORD_WEBHOOK_URL not set — logging escalation locally");
+    console.log("[ESCALATION] Service:", payload.alert.service);
+    console.log("[ESCALATION] Root cause:", payload.result.root_cause);
+    console.log("[ESCALATION] Proposed fix:", payload.result.proposed_fix);
     return;
   }
 
-  const url = new URL(ESCALATION_URL);
+  const actionsList = payload.result.actions_taken
+    .slice(0, 5)
+    .map(a => `• ${a.split("->")[0].trim()}`)
+    .join("\n");
+
+  const discordBody = JSON.stringify({
+    embeds: [{
+      title: `🚨 AI ne može da fiksuje incident — potrebna ljudska intervencija`,
+      color: 0xff4444,
+      fields: [
+        { name: "Servis", value: `\`${payload.alert.service}\``, inline: true },
+        { name: "Severity", value: `\`${payload.alert.severity}\``, inline: true },
+        { name: "Root Cause", value: payload.result.root_cause.slice(0, 500) },
+        { name: "Sta je AI pokusao", value: actionsList || "—" },
+        { name: "Predlozeni fix", value: `\`\`\`${payload.result.proposed_fix.slice(0, 800)}\`\`\`` },
+        { name: "Confidence", value: `${Math.round(payload.result.confidence * 100)}%`, inline: true },
+      ],
+      timestamp: new Date().toISOString(),
+      footer: { text: "AI On-Call Engineer" },
+    }],
+  });
+
+  const url = new URL(DISCORD_URL);
   const req = http.request(
-    { hostname: url.hostname, port: url.port, path: url.pathname + url.search, method: "POST",
-      headers: { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(body) } },
-    (res) => { console.log(`[Escalation] SuperPlane notified, status: ${res.statusCode}`); }
+    { hostname: url.hostname, port: url.port || 443, path: url.pathname + url.search, method: "POST",
+      headers: { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(discordBody) } },
+    (res) => { console.log(`[Discord] Escalation sent, status: ${res.statusCode}`); }
   );
-  req.on("error", (e) => console.error("[Escalation] Error:", e.message));
-  req.write(body);
+  req.on("error", (e) => console.error("[Discord] Error:", e.message));
+  req.write(discordBody);
   req.end();
 }
 
