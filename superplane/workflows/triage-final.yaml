@@ -1,0 +1,219 @@
+apiVersion: v1
+kind: Canvas
+metadata:
+  name: "incident-triage"
+  id: "acee68d3-328c-43d4-acdb-b930c3af2e93"
+spec:
+  nodes:
+    - id: "receive-alert"
+      name: "Receive Alert"
+      type: "TYPE_TRIGGER"
+      trigger:
+        name: "webhook"
+      configuration:
+        authentication: "none"
+      position:
+        x: 0
+        y: 600
+
+    - id: "get-logs"
+      name: "Get Logs"
+      type: "TYPE_COMPONENT"
+      component:
+        name: "http"
+      configuration:
+        method: "GET"
+        url: "https://funny-tulsa-testament-guarantee.trycloudflare.com/mock/logs?service={{ $[\"Receive Alert\"].data.body.service }}&minutes=30"
+        successCodes: "2xx"
+        timeoutSeconds: 15
+      position:
+        x: 400
+        y: 100
+
+    - id: "get-metrics"
+      name: "Get Metrics"
+      type: "TYPE_COMPONENT"
+      component:
+        name: "http"
+      configuration:
+        method: "GET"
+        url: "https://funny-tulsa-testament-guarantee.trycloudflare.com/mock/metrics?service={{ $[\"Receive Alert\"].data.body.service }}"
+        successCodes: "2xx"
+        timeoutSeconds: 15
+      position:
+        x: 400
+        y: 450
+
+    - id: "get-deployments"
+      name: "Get Deployments"
+      type: "TYPE_COMPONENT"
+      component:
+        name: "http"
+      configuration:
+        method: "GET"
+        url: "https://funny-tulsa-testament-guarantee.trycloudflare.com/mock/deployments?service={{ $[\"Receive Alert\"].data.body.service }}&hours=24"
+        successCodes: "2xx"
+        timeoutSeconds: 15
+      position:
+        x: 400
+        y: 800
+
+    - id: "get-app-health"
+      name: "Get App Health"
+      type: "TYPE_COMPONENT"
+      component:
+        name: "http"
+      configuration:
+        method: "GET"
+        url: "https://funny-tulsa-testament-guarantee.trycloudflare.com/health"
+        successCodes: "2xx,503"
+        timeoutSeconds: 10
+      position:
+        x: 400
+        y: 1100
+
+    - id: "merge-all"
+      name: "Merge Context"
+      type: "TYPE_COMPONENT"
+      component:
+        name: "merge"
+      configuration:
+        enableTimeout: true
+        executionTimeout:
+          unit: "minutes"
+          value: 1
+      position:
+        x: 900
+        y: 600
+
+    - id: "check-severity"
+      name: "Critical / High?"
+      type: "TYPE_COMPONENT"
+      component:
+        name: "if"
+      configuration:
+        expression: '$["Receive Alert"].data.body.severity == "critical" || $["Receive Alert"].data.body.severity == "high"'
+      position:
+        x: 1300
+        y: 600
+
+    - id: "wait-before-ai"
+      name: "Wait 30s (stabilize)"
+      type: "TYPE_COMPONENT"
+      component:
+        name: "wait"
+      configuration:
+        mode: "interval"
+        waitFor: "30"
+        unit: "seconds"
+      position:
+        x: 1700
+        y: 400
+
+    - id: "trigger-investigation"
+      name: "Trigger AI Investigation"
+      type: "TYPE_COMPONENT"
+      component:
+        name: "http"
+      configuration:
+        method: "POST"
+        url: "https://funny-tulsa-testament-guarantee.trycloudflare.com/trigger/investigate"
+        successCodes: "2xx"
+        timeoutSeconds: 10
+        headers:
+          - name: "Content-Type"
+            value: "application/json"
+        body: |
+          {
+            "alert": {
+              "service": "{{ $["Receive Alert"].data.body.service }}",
+              "severity": "{{ $["Receive Alert"].data.body.severity }}",
+              "message": "{{ $["Receive Alert"].data.body.message }}",
+              "timestamp": "{{ $["Receive Alert"].data.body.timestamp }}"
+            },
+            "context": {
+              "logs": {{ $["Get Logs"].data.body }},
+              "metrics": {{ $["Get Metrics"].data.body }},
+              "deployments": {{ $["Get Deployments"].data.body }}
+            }
+          }
+      position:
+        x: 2100
+        y: 300
+
+    - id: "filter-low-sev"
+      name: "Low / Medium?"
+      type: "TYPE_COMPONENT"
+      component:
+        name: "filter"
+      configuration:
+        expression: '$["Receive Alert"].data.body.severity == "low" || $["Receive Alert"].data.body.severity == "medium"'
+      position:
+        x: 1700
+        y: 900
+
+    - id: "log-low-severity"
+      name: "Log & Monitor Only"
+      type: "TYPE_COMPONENT"
+      component:
+        name: "http"
+      configuration:
+        method: "POST"
+        url: "https://funny-tulsa-testament-guarantee.trycloudflare.com/trigger/escalate"
+        successCodes: "2xx"
+        timeoutSeconds: 10
+        headers:
+          - name: "Content-Type"
+            value: "application/json"
+        body: |
+          {
+            "service": "{{ $["Receive Alert"].data.body.service }}",
+            "root_cause": "Low/medium severity — monitoring only, no AI investigation triggered",
+            "proposed_fix": "Monitor the service. Escalate manually if situation worsens.",
+            "confidence": 0.5,
+            "actions_taken": []
+          }
+      position:
+        x: 2100
+        y: 1000
+
+  edges:
+    - sourceId: "receive-alert"
+      targetId: "get-logs"
+      channel: "default"
+    - sourceId: "receive-alert"
+      targetId: "get-metrics"
+      channel: "default"
+    - sourceId: "receive-alert"
+      targetId: "get-deployments"
+      channel: "default"
+    - sourceId: "receive-alert"
+      targetId: "get-app-health"
+      channel: "default"
+    - sourceId: "get-logs"
+      targetId: "merge-all"
+      channel: "success"
+    - sourceId: "get-metrics"
+      targetId: "merge-all"
+      channel: "success"
+    - sourceId: "get-deployments"
+      targetId: "merge-all"
+      channel: "success"
+    - sourceId: "get-app-health"
+      targetId: "merge-all"
+      channel: "success"
+    - sourceId: "merge-all"
+      targetId: "check-severity"
+      channel: "success"
+    - sourceId: "check-severity"
+      targetId: "wait-before-ai"
+      channel: "true"
+    - sourceId: "check-severity"
+      targetId: "filter-low-sev"
+      channel: "false"
+    - sourceId: "wait-before-ai"
+      targetId: "trigger-investigation"
+      channel: "default"
+    - sourceId: "filter-low-sev"
+      targetId: "log-low-severity"
+      channel: "success"

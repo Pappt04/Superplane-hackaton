@@ -23,7 +23,7 @@ spec:
         name: "readMemory"
       configuration:
         namespace: "incidents"
-        resultMode: "first"
+        resultMode: "latest"
         matchList:
           - name: "service"
             value: '{{ $["Receive Investigation Result"].data.body.service }}'
@@ -67,20 +67,6 @@ spec:
         x: 800
         y: 600
 
-    - id: "merge-branches"
-      name: "Merge Paths"
-      type: "TYPE_COMPONENT"
-      component:
-        name: "merge"
-      configuration:
-        enableTimeout: true
-        executionTimeout:
-          unit: "minutes"
-          value: 1
-      position:
-        x: 1200
-        y: 400
-
     - id: "store-incident"
       name: "Store Incident in Memory"
       type: "TYPE_COMPONENT"
@@ -102,22 +88,8 @@ spec:
           - name: "timestamp"
             value: '{{ $["Receive Investigation Result"].data.body.timestamp }}'
       position:
-        x: 1600
+        x: 1200
         y: 400
-
-    - id: "send-postmortem-email"
-      name: "Send Postmortem Email"
-      type: "TYPE_COMPONENT"
-      component:
-        name: "sendEmail"
-      configuration:
-        recipients:
-          - "oncall@yourcompany.com"
-        subject: '[Post-Incident] {{ $["Receive Investigation Result"].data.body.service }} — MTTR {{ $["Receive Investigation Result"].data.body.mttr_seconds }}s'
-        body: '{{ $["Receive Investigation Result"].data.body.postmortem }}'
-      position:
-        x: 2000
-        y: 200
 
     - id: "post-discord-report"
       name: "Post Report to Discord"
@@ -135,20 +107,20 @@ spec:
         body: |
           {
             "embeds": [{
-              "title": "📋 Post-Incident Report — {{ $["Receive Investigation Result"].data.body.service }}",
-              "description": "**Root Cause:** {{ $[\"Receive Investigation Result\"].data.body.root_cause }}\n\n**MTTR:** {{ $[\"Receive Investigation Result\"].data.body.mttr_seconds }}s",
+              "title": "Post-Incident Report - {{ $["Receive Investigation Result"].data.body.service }}",
               "color": 3949209,
               "fields": [
-                {"name": "Service", "value": "{{ $[\"Receive Investigation Result\"].data.body.service }}", "inline": true},
-                {"name": "MTTR", "value": "{{ $[\"Receive Investigation Result\"].data.body.mttr_seconds }}s", "inline": true},
-                {"name": "Status", "value": "{{ $[\"Receive Investigation Result\"].data.body.fix_applied == true ? 'Auto-resolved' : 'Escalated' }}", "inline": true}
+                {"name": "Service", "value": "{{ $["Receive Investigation Result"].data.body.service }}", "inline": true},
+                {"name": "MTTR", "value": "{{ $["Receive Investigation Result"].data.body.mttr_seconds }}s", "inline": true},
+                {"name": "Fix Applied", "value": "{{ $["Receive Investigation Result"].data.body.fix_applied }}", "inline": true},
+                {"name": "Severity", "value": "{{ $["Receive Investigation Result"].data.body.severity }}", "inline": true}
               ],
               "footer": {"text": "SuperPlane Post-Incident Pipeline"}
             }]
           }
       position:
-        x: 2000
-        y: 600
+        x: 1600
+        y: 400
 
   edges:
     - sourceId: "receive-result"
@@ -161,16 +133,10 @@ spec:
       targetId: "noop-first-time"
       channel: "notFound"
     - sourceId: "flag-recurring"
-      targetId: "merge-branches"
-      channel: "success"
-    - sourceId: "noop-first-time"
-      targetId: "merge-branches"
-      channel: "default"
-    - sourceId: "merge-branches"
       targetId: "store-incident"
       channel: "success"
-    - sourceId: "store-incident"
-      targetId: "send-postmortem-email"
+    - sourceId: "noop-first-time"
+      targetId: "store-incident"
       channel: "default"
     - sourceId: "store-incident"
       targetId: "post-discord-report"

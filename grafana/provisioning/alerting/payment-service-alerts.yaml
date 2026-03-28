@@ -11,6 +11,9 @@ groups:
         condition: C
         data:
           - refId: A
+            relativeTimeRange:
+              from: 60
+              to: 0
             datasourceUid: prometheus
             model:
               expr: payment_service_up
@@ -19,6 +22,9 @@ groups:
               maxDataPoints: 43200
               refId: A
           - refId: C
+            relativeTimeRange:
+              from: 60
+              to: 0
             datasourceUid: __expr__
             model:
               conditions:
@@ -61,6 +67,9 @@ groups:
         condition: C
         data:
           - refId: A
+            relativeTimeRange:
+              from: 60
+              to: 0
             datasourceUid: prometheus
             model:
               expr: payment_service_error_rate
@@ -69,6 +78,9 @@ groups:
               maxDataPoints: 43200
               refId: A
           - refId: C
+            relativeTimeRange:
+              from: 60
+              to: 0
             datasourceUid: __expr__
             model:
               conditions:

@@ -188,15 +188,27 @@ app.post("/demo/trigger", async (req: Request, res: Response) => {
 });
 
 // POST /trigger/investigate — called by SuperPlane after triage merge
-// Receives { alert, context } and calls the AI agent
+// Receives { alert, context } OR flat { service, severity, message, timestamp }
 app.post("/trigger/investigate", async (req: Request, res: Response) => {
-  const payload = req.body as Partial<InvestigationRequest>;
-  if (!payload.alert?.service) {
+  const payload = req.body as Partial<InvestigationRequest> & Partial<Alert>;
+  console.log(`[INVESTIGATE] Received payload keys: ${Object.keys(payload).join(", ")}`);
+
+  // Accept both nested { alert: { service } } and flat { service } payloads
+  const raw = payload as Record<string, unknown>;
+  const alert: Alert = payload.alert?.service
+    ? payload.alert
+    : {
+        service: raw.service as string || "payment-service",
+        severity: (raw.severity as Alert["severity"]) || "critical",
+        message: raw.message as string || "Incident detected",
+        timestamp: raw.timestamp as string || new Date().toISOString(),
+      };
+
+  if (!alert.service) {
+    console.error("[INVESTIGATE] Missing service in payload:", JSON.stringify(payload));
     res.status(400).json({ error: "Missing alert.service" });
     return;
   }
-
-  const alert = payload.alert;
   const incidentId = `inc-${Date.now()}`;
 
   console.log(`\n[INVESTIGATE] Starting AI investigation for ${alert.service} (${incidentId})`);
