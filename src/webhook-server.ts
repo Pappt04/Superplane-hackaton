@@ -132,7 +132,8 @@ async function triggerSuperPlane(alert: Alert): Promise<void> {
   }
   const url = new URL(SUPERPLANE_TRIAGE_WEBHOOK_URL);
   const body = JSON.stringify(alert);
-  const req = http.request(
+  const transport = url.protocol === "https:" ? https : http;
+  const req = transport.request(
     { hostname: url.hostname, port: url.port || (url.protocol === "https:" ? 443 : 80),
       path: url.pathname + url.search, method: "POST",
       headers: { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(body) } },
