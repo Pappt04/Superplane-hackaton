@@ -27,7 +27,7 @@ spec:
       type: "TYPE_COMPONENT"
       configuration:
         method: "POST"
-        url: "http://localhost:3001/agent/investigate"
+        url: "{{ env.AGENT_URL }}/agent/investigate"
         successCodes: "2xx"
         timeoutSeconds: 120
         headers:
@@ -115,7 +115,7 @@ spec:
       type: "TYPE_COMPONENT"
       configuration:
         method: "POST"
-        url: "http://localhost:3000/trigger/escalate"
+        url: "{{ env.WEBHOOK_SERVER_URL }}/trigger/escalate"
         successCodes: "2xx"
         timeoutSeconds: 10
         headers:

@@ -27,7 +27,7 @@ spec:
       type: "TYPE_COMPONENT"
       configuration:
         method: "GET"
-        url: "http://localhost:3000/mock/logs?service={{ $[\"Receive Alert\"].data.service }}&minutes=30"
+        url: "{{ env.WEBHOOK_SERVER_URL }}/mock/logs?service={{ $[\"Receive Alert\"].data.service }}&minutes=30"
         successCodes: "2xx"
         timeoutSeconds: 15
       metadata: null
@@ -49,7 +49,7 @@ spec:
       type: "TYPE_COMPONENT"
       configuration:
         method: "GET"
-        url: "http://localhost:3000/mock/metrics?service={{ $[\"Receive Alert\"].data.service }}"
+        url: "{{ env.WEBHOOK_SERVER_URL }}/mock/metrics?service={{ $[\"Receive Alert\"].data.service }}"
         successCodes: "2xx"
         timeoutSeconds: 15
       metadata: null
@@ -71,7 +71,7 @@ spec:
       type: "TYPE_COMPONENT"
       configuration:
         method: "GET"
-        url: "http://localhost:3000/mock/deployments?service={{ $[\"Receive Alert\"].data.service }}&hours=24"
+        url: "{{ env.WEBHOOK_SERVER_URL }}/mock/deployments?service={{ $[\"Receive Alert\"].data.service }}&hours=24"
         successCodes: "2xx"
         timeoutSeconds: 15
       metadata: null
@@ -116,7 +116,7 @@ spec:
       type: "TYPE_COMPONENT"
       configuration:
         method: "POST"
-        url: "http://localhost:3000/trigger/investigate"
+        url: "{{ env.WEBHOOK_SERVER_URL }}/trigger/investigate"
         successCodes: "2xx"
         timeoutSeconds: 10
         headers:
