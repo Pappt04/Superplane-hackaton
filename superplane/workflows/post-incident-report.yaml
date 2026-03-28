@@ -1,0 +1,177 @@
+apiVersion: v1
+kind: Canvas
+metadata:
+  name: "post-incident-report"
+  id: "e597e683-4cd8-4e7b-b26e-de214102b297"
+spec:
+  nodes:
+    - id: "receive-result"
+      name: "Receive Investigation Result"
+      type: "TYPE_TRIGGER"
+      trigger:
+        name: "webhook"
+      configuration:
+        authentication: "none"
+      position:
+        x: 0
+        y: 400
+
+    - id: "read-history"
+      name: "Check Incident History"
+      type: "TYPE_COMPONENT"
+      component:
+        name: "readMemory"
+      configuration:
+        namespace: "incidents"
+        resultMode: "first"
+        matchList:
+          - name: "service"
+            value: '{{ $["Receive Investigation Result"].data.body.service }}'
+      position:
+        x: 400
+        y: 400
+
+    - id: "flag-recurring"
+      name: "Flag as Recurring"
+      type: "TYPE_COMPONENT"
+      component:
+        name: "http"
+      configuration:
+        method: "POST"
+        url: "https://funny-tulsa-testament-guarantee.trycloudflare.com/post-incident"
+        successCodes: "2xx"
+        timeoutSeconds: 10
+        headers:
+          - name: "Content-Type"
+            value: "application/json"
+        body: |
+          {
+            "service": "{{ $["Receive Investigation Result"].data.body.service }}",
+            "severity": "{{ $["Receive Investigation Result"].data.body.severity }}",
+            "fix_applied": {{ $["Receive Investigation Result"].data.body.fix_applied }},
+            "root_cause": "{{ $["Receive Investigation Result"].data.body.root_cause }}",
+            "mttr_seconds": {{ $["Receive Investigation Result"].data.body.mttr_seconds }},
+            "timestamp": "{{ $["Receive Investigation Result"].data.body.timestamp }}",
+            "recurring": true
+          }
+      position:
+        x: 800
+        y: 200
+
+    - id: "noop-first-time"
+      name: "First Occurrence"
+      type: "TYPE_COMPONENT"
+      component:
+        name: "noop"
+      position:
+        x: 800
+        y: 600
+
+    - id: "merge-branches"
+      name: "Merge Paths"
+      type: "TYPE_COMPONENT"
+      component:
+        name: "merge"
+      configuration:
+        enableTimeout: true
+        executionTimeout:
+          unit: "minutes"
+          value: 1
+      position:
+        x: 1200
+        y: 400
+
+    - id: "store-incident"
+      name: "Store Incident in Memory"
+      type: "TYPE_COMPONENT"
+      component:
+        name: "addMemory"
+      configuration:
+        namespace: "incidents"
+        valueList:
+          - name: "service"
+            value: '{{ $["Receive Investigation Result"].data.body.service }}'
+          - name: "severity"
+            value: '{{ $["Receive Investigation Result"].data.body.severity }}'
+          - name: "root_cause"
+            value: '{{ $["Receive Investigation Result"].data.body.root_cause }}'
+          - name: "fix_applied"
+            value: '{{ $["Receive Investigation Result"].data.body.fix_applied }}'
+          - name: "mttr_seconds"
+            value: '{{ $["Receive Investigation Result"].data.body.mttr_seconds }}'
+          - name: "timestamp"
+            value: '{{ $["Receive Investigation Result"].data.body.timestamp }}'
+      position:
+        x: 1600
+        y: 400
+
+    - id: "send-postmortem-email"
+      name: "Send Postmortem Email"
+      type: "TYPE_COMPONENT"
+      component:
+        name: "sendEmail"
+      configuration:
+        recipients:
+          - "oncall@yourcompany.com"
+        subject: '[Post-Incident] {{ $["Receive Investigation Result"].data.body.service }} — MTTR {{ $["Receive Investigation Result"].data.body.mttr_seconds }}s'
+        body: '{{ $["Receive Investigation Result"].data.body.postmortem }}'
+      position:
+        x: 2000
+        y: 200
+
+    - id: "post-discord-report"
+      name: "Post Report to Discord"
+      type: "TYPE_COMPONENT"
+      component:
+        name: "http"
+      configuration:
+        method: "POST"
+        url: "https://discord.com/api/webhooks/1487431009011106003/ER9e-4H0WIKdF14_vhT8_H8oG8he35ck1It5Cz-vGIXVEBWdz0-5tqF0_l0n4LfHEZF0"
+        successCodes: "2xx,204"
+        timeoutSeconds: 10
+        headers:
+          - name: "Content-Type"
+            value: "application/json"
+        body: |
+          {
+            "embeds": [{
+              "title": "📋 Post-Incident Report — {{ $["Receive Investigation Result"].data.body.service }}",
+              "description": "**Root Cause:** {{ $[\"Receive Investigation Result\"].data.body.root_cause }}\n\n**MTTR:** {{ $[\"Receive Investigation Result\"].data.body.mttr_seconds }}s",
+              "color": 3949209,
+              "fields": [
+                {"name": "Service", "value": "{{ $[\"Receive Investigation Result\"].data.body.service }}", "inline": true},
+                {"name": "MTTR", "value": "{{ $[\"Receive Investigation Result\"].data.body.mttr_seconds }}s", "inline": true},
+                {"name": "Status", "value": "{{ $[\"Receive Investigation Result\"].data.body.fix_applied == true ? 'Auto-resolved' : 'Escalated' }}", "inline": true}
+              ],
+              "footer": {"text": "SuperPlane Post-Incident Pipeline"}
+            }]
+          }
+      position:
+        x: 2000
+        y: 600
+
+  edges:
+    - sourceId: "receive-result"
+      targetId: "read-history"
+      channel: "default"
+    - sourceId: "read-history"
+      targetId: "flag-recurring"
+      channel: "found"
+    - sourceId: "read-history"
+      targetId: "noop-first-time"
+      channel: "notFound"
+    - sourceId: "flag-recurring"
+      targetId: "merge-branches"
+      channel: "success"
+    - sourceId: "noop-first-time"
+      targetId: "merge-branches"
+      channel: "default"
+    - sourceId: "merge-branches"
+      targetId: "store-incident"
+      channel: "success"
+    - sourceId: "store-incident"
+      targetId: "send-postmortem-email"
+      channel: "default"
+    - sourceId: "store-incident"
+      targetId: "post-discord-report"
+      channel: "default"

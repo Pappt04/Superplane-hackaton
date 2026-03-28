@@ -419,7 +419,7 @@
     <div class="logo-icon">⚡</div>
     <div>
       <h1>AI On-Call</h1>
-      <div class="subtitle">Incident Dashboard — SuperPlane + Claude</div>
+      <div class="subtitle">Incident Dashboard — SuperPlane + Groq Llama 4</div>
     </div>
   </div>
   <div class="header-right">
@@ -437,10 +437,12 @@
       <span>Resolved: <span class="stat-value" id="statResolved" style="color:var(--green)">0</span></span>
       <span>Escalated: <span class="stat-value" id="statEscalated" style="color:var(--red)">0</span></span>
       <span>Active: <span class="stat-value" id="statActive" style="color:var(--amber)">0</span></span>
+      <span>Avg MTTR: <span class="stat-value" id="statMttr" style="color:var(--blue)">—</span></span>
     </div>
     <div style="display:flex;gap:8px;flex-wrap:wrap;">
-      <button class="btn btn-danger" id="btnCrash" onclick="triggerCrash()">💥 Crash Service</button>
-      <button class="btn btn-primary" id="btnDemo" onclick="triggerDemo()">⚡ Trigger Demo Incident</button>
+      <button class="btn btn-danger" onclick="triggerScenario('a')">💥 Scenario A (AI fixes)</button>
+      <button class="btn" style="border-color:var(--red);color:var(--red)" onclick="triggerScenario('b')">🔴 Scenario B (Escalate)</button>
+      <button class="btn btn-primary" id="btnDemo" onclick="triggerDemo()">⚡ Demo Incident</button>
       <button class="btn" onclick="clearAll()">🗑 Clear</button>
     </div>
   </div>
@@ -523,8 +525,10 @@
         updateCard(incidentId || findCardByService(alert?.service), 'RESOLVED', result, alert);
         resolvedCount++;
         activeCount = Math.max(0, activeCount - 1);
+        if (result?.mttr_seconds) mttrValues.push(result.mttr_seconds);
         updateStats();
-        setLog(`✅ AI resolved: ${alert?.service} — ${result?.root_cause?.slice(0, 60)}...`);
+        const mttrStr = result?.mttr_seconds ? (result.mttr_seconds < 60 ? result.mttr_seconds + 's' : Math.floor(result.mttr_seconds/60) + 'm ' + (result.mttr_seconds%60) + 's') : '';
+        setLog(`✅ AI resolved: ${alert?.service}${mttrStr ? ' in ' + mttrStr : ''} — ${result?.root_cause?.slice(0, 50)}...`);
         break;
       }
       case 'INCIDENT_ESCALATED': {
@@ -677,6 +681,16 @@
             <div class="detail-label">Full Timeline</div>
             <div class="timeline-box">${escHtml(result.full_timeline || '')}</div>
           </div>
+          ${result.postmortem ? `
+          <div class="detail-section full-width" style="margin-top:8px;">
+            <div class="detail-label">Postmortem Report</div>
+            <div class="timeline-box" style="white-space:pre-wrap;color:var(--text)">${escHtml(result.postmortem)}</div>
+          </div>` : ''}
+          ${result.mttr_seconds ? `
+          <div class="detail-section" style="margin-top:8px;">
+            <div class="detail-label">MTTR</div>
+            <div class="detail-value" style="color:var(--green);font-size:20px;font-weight:bold;">${result.mttr_seconds < 60 ? result.mttr_seconds + 's' : Math.floor(result.mttr_seconds/60) + 'm ' + (result.mttr_seconds%60) + 's'}</div>
+          </div>` : ''}
         </div>
       `;
 
@@ -696,11 +710,17 @@
 
   // ── Stats ──────────────────────────────────────────────────────────────────
 
+  const mttrValues = [];
+
   function updateStats() {
     document.getElementById('statTotal').textContent = totalCount;
     document.getElementById('statResolved').textContent = resolvedCount;
     document.getElementById('statEscalated').textContent = escalatedCount;
     document.getElementById('statActive').textContent = activeCount;
+    if (mttrValues.length > 0) {
+      const avg = Math.round(mttrValues.reduce((a, b) => a + b, 0) / mttrValues.length);
+      document.getElementById('statMttr').textContent = avg < 60 ? avg + 's' : Math.floor(avg/60) + 'm ' + (avg%60) + 's';
+    }
   }
 
   // ── Terminal log ────────────────────────────────────────────────────────────
@@ -725,6 +745,16 @@
       setLog(`Error: ${e.message}`);
     } finally {
       setTimeout(() => { btn.disabled = false; btn.textContent = '⚡ Trigger Demo Incident'; }, 2000);
+    }
+  }
+
+  async function triggerScenario(scenario) {
+    try {
+      const res = await fetch(`http://localhost:3002/chaos/scenario-${scenario}`, { method: 'POST' });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      setLog(`Scenario ${scenario.toUpperCase()} triggered — ${scenario === 'a' ? 'AI will fix this' : 'AI will escalate this'}`);
+    } catch (e) {
+      setLog(`Error: Cannot reach mock service — is it running on port 3002? (${e.message})`);
     }
   }
 

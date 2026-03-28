@@ -1,0 +1,93 @@
+apiVersion: v1
+kind: Canvas
+metadata:
+  name: "rollback-approval"
+spec:
+  nodes:
+    - id: "receive-rollback-request"
+      name: "Receive Rollback Request"
+      type: "TYPE_TRIGGER"
+      trigger:
+        name: "webhook"
+      configuration:
+        authentication: "none"
+      position:
+        x: 0
+        y: 400
+
+    - id: "request-human-approval"
+      name: "Request Human Approval"
+      type: "TYPE_COMPONENT"
+      component:
+        name: "approval"
+      configuration:
+        items:
+          - type: "anyone"
+      position:
+        x: 400
+        y: 400
+
+    - id: "execute-rollback"
+      name: "Execute Rollback"
+      type: "TYPE_COMPONENT"
+      component:
+        name: "http"
+      configuration:
+        method: "POST"
+        url: "https://funny-tulsa-testament-guarantee.trycloudflare.com/rollback"
+        successCodes: "2xx"
+        timeoutSeconds: 15
+        headers:
+          - name: "Content-Type"
+            value: "application/json"
+        body: |
+          {
+            "service": "{{ $["Receive Rollback Request"].data.body.service }}",
+            "version": "{{ $["Receive Rollback Request"].data.body.version }}",
+            "approved_by": "human",
+            "reason": "{{ $["Receive Rollback Request"].data.body.reason }}"
+          }
+      position:
+        x: 900
+        y: 200
+
+    - id: "notify-rollback-rejected"
+      name: "Notify — Rollback Rejected"
+      type: "TYPE_COMPONENT"
+      component:
+        name: "http"
+      configuration:
+        method: "POST"
+        url: "https://discord.com/api/webhooks/1487431009011106003/ER9e-4H0WIKdF14_vhT8_H8oG8he35ck1It5Cz-vGIXVEBWdz0-5tqF0_l0n4LfHEZF0"
+        successCodes: "2xx,204"
+        timeoutSeconds: 10
+        headers:
+          - name: "Content-Type"
+            value: "application/json"
+        body: |
+          {
+            "embeds": [{
+              "title": "🚫 Rollback Rejected by Human",
+              "color": 16711680,
+              "fields": [
+                {"name": "Service", "value": "{{ $[\"Receive Rollback Request\"].data.body.service }}", "inline": true},
+                {"name": "Version", "value": "{{ $[\"Receive Rollback Request\"].data.body.version }}", "inline": true},
+                {"name": "Action", "value": "Manual investigation required"}
+              ],
+              "footer": {"text": "SuperPlane Approval Gate"}
+            }]
+          }
+      position:
+        x: 900
+        y: 600
+
+  edges:
+    - sourceId: "receive-rollback-request"
+      targetId: "request-human-approval"
+      channel: "default"
+    - sourceId: "request-human-approval"
+      targetId: "execute-rollback"
+      channel: "approved"
+    - sourceId: "request-human-approval"
+      targetId: "notify-rollback-rejected"
+      channel: "rejected"

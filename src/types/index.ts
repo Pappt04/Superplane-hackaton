@@ -48,4 +48,6 @@ export interface InvestigationResult {
   proposed_fix: string;
   confidence: number;       // 0.0 - 1.0
   full_timeline: string;
+  postmortem: string;
+  mttr_seconds: number;
 }

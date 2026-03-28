@@ -14,6 +14,8 @@ const PORT = parseInt(process.env.WEBHOOK_PORT || "3000", 10);
 const AGENT_URL = process.env.AGENT_URL || "http://localhost:3001";
 const DASHBOARD_URL = process.env.DASHBOARD_URL || "http://localhost:3003";
 const SUPERPLANE_TRIAGE_WEBHOOK_URL = process.env.SUPERPLANE_TRIAGE_WEBHOOK_URL || "";
+const SUPERPLANE_POST_INCIDENT_WEBHOOK_URL = process.env.SUPERPLANE_POST_INCIDENT_WEBHOOK_URL || "";
+const DISCORD_WEBHOOK_URL_ENV = process.env.DISCORD_WEBHOOK_URL || "";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -112,9 +114,13 @@ async function triggerAgentDirectly(alert: Alert): Promise<void> {
 
     const type = result.fix_applied ? "INCIDENT_RESOLVED" : "INCIDENT_ESCALATED";
     postToDashboard({ type, incidentId, alert, result, timestamp: new Date().toISOString() });
-    console.log(`[AGENT] ${type} — fix_applied: ${result.fix_applied}`);
+    console.log(`[AGENT] ${type} — fix_applied: ${result.fix_applied}, mttr: ${result.mttr_seconds}s`);
 
-    if (!result.fix_applied) {
+    triggerPostIncidentCanvas(alert, result);
+
+    if (result.fix_applied) {
+      triggerResolutionNotification({ alert, result }).catch((e) => console.error("[Discord Resolve]", e));
+    } else {
       triggerEscalation({ alert, result }).catch((e) => console.error("[Escalation]", e));
     }
   } catch (err) {
@@ -235,11 +241,15 @@ app.post("/trigger/investigate", async (req: Request, res: Response) => {
 
       console.log(`[${incidentId}] fix_applied=${result.fix_applied}, confidence=${result.confidence}`);
 
+      const resultType = result.fix_applied ? "INCIDENT_RESOLVED" : "INCIDENT_ESCALATED";
+      postToDashboard({ type: resultType, incidentId, alert, result, timestamp: new Date().toISOString() });
+      console.log(`[${incidentId}] ${resultType} — mttr: ${result.mttr_seconds}s`);
+
+      triggerPostIncidentCanvas(alert, result);
+
       if (result.fix_applied) {
-        postToDashboard({ type: "INCIDENT_RESOLVED", incidentId, alert, result, timestamp: new Date().toISOString() });
+        triggerResolutionNotification({ alert, result }).catch((e) => console.error("[Discord Resolve]", e));
       } else {
-        postToDashboard({ type: "INCIDENT_ESCALATED", incidentId, alert, result, timestamp: new Date().toISOString() });
-        // Forward to human escalation
         triggerEscalation({ alert, result }).catch((e) => console.error("[Escalation]", e));
       }
     } catch (err) {
@@ -256,6 +266,58 @@ app.post("/trigger/escalate", (req: Request, res: Response) => {
   console.log(`\n[ESCALATE] Human escalation for: ${payload.service}`);
   postToDashboard({ type: "HUMAN_ESCALATION", ...payload, timestamp: new Date().toISOString() });
   res.json({ ok: true });
+});
+
+// POST /post-incident — SuperPlane post-incident canvas calls this after storing in memory
+app.post("/post-incident", (req: Request, res: Response) => {
+  const payload = req.body as Record<string, unknown>;
+  const recurring = payload.recurring === true;
+  console.log(`\n[POST-INCIDENT] ${payload.service} — fix: ${payload.fix_applied}, recurring: ${recurring}, mttr: ${payload.mttr_seconds}s`);
+  postToDashboard({
+    type: recurring ? "RECURRING_INCIDENT" : "INCIDENT_RESOLVED",
+    alert: { service: payload.service as string, severity: payload.severity as string, message: payload.root_cause as string, timestamp: payload.timestamp as string },
+    result: payload as unknown as InvestigationResult,
+    timestamp: new Date().toISOString(),
+  } as Parameters<typeof postToDashboard>[0]);
+  res.json({ ok: true, recurring });
+});
+
+// POST /rollback — called by SuperPlane approval canvas after human approves
+app.post("/rollback", async (req: Request, res: Response) => {
+  const { service, version } = req.body as { service?: string; version?: string };
+  if (!service || !version) {
+    res.status(400).json({ error: "Missing service or version" });
+    return;
+  }
+  console.log(`\n[ROLLBACK APPROVED] ${service} → ${version}`);
+  res.json({ ok: true, service, version, message: `Rollback of ${service} to ${version} initiated` });
+
+  // Notify Discord
+  const DISCORD_URL = DISCORD_WEBHOOK_URL_ENV;
+  if (DISCORD_URL) {
+    const body = JSON.stringify({
+      embeds: [{
+        title: `🔄 Rollback Approved & Executed`,
+        color: 0x58a6ff,
+        fields: [
+          { name: "Service", value: `\`${service}\``, inline: true },
+          { name: "Version", value: `\`${version}\``, inline: true },
+          { name: "Status", value: "Rollback initiated after human approval", inline: false },
+        ],
+        timestamp: new Date().toISOString(),
+        footer: { text: "AI On-Call — Manual approval flow" },
+      }],
+    });
+    const url = new URL(DISCORD_URL);
+    const req2 = https.request(
+      { hostname: url.hostname, port: 443, path: url.pathname + url.search, method: "POST",
+        headers: { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(body) } },
+      () => {}
+    );
+    req2.on("error", () => {});
+    req2.write(body);
+    req2.end();
+  }
 });
 
 // ─── Mock data endpoints (called by SuperPlane triage workflow) ───────────────
@@ -330,6 +392,75 @@ async function triggerEscalation(payload: { alert: Alert; result: InvestigationR
   req.end();
 }
 
+async function triggerResolutionNotification(payload: { alert: Alert; result: InvestigationResult }): Promise<void> {
+  const DISCORD_URL = DISCORD_WEBHOOK_URL_ENV;
+  if (!DISCORD_URL) return;
+
+  const mttrStr = payload.result.mttr_seconds < 60
+    ? `${payload.result.mttr_seconds}s`
+    : `${Math.floor(payload.result.mttr_seconds / 60)}m ${payload.result.mttr_seconds % 60}s`;
+
+  const actionsList = payload.result.actions_taken
+    .slice(0, 4)
+    .map(a => `• ${a.split("->")[0].trim()}`)
+    .join("\n") || "—";
+
+  const discordBody = JSON.stringify({
+    embeds: [{
+      title: `✅ Incident auto-resolved — ${payload.alert.service}`,
+      color: 0x3fb950,
+      fields: [
+        { name: "Servis", value: `\`${payload.alert.service}\``, inline: true },
+        { name: "MTTR", value: `\`${mttrStr}\``, inline: true },
+        { name: "Severity", value: `\`${payload.alert.severity}\``, inline: true },
+        { name: "Root Cause", value: payload.result.root_cause.slice(0, 1000) || "—" },
+        { name: "Akcije AI agenta", value: actionsList },
+        { name: "Confidence", value: `${Math.round(payload.result.confidence * 100)}%`, inline: true },
+      ],
+      timestamp: new Date().toISOString(),
+      footer: { text: "AI On-Call Engineer — No human intervention required" },
+    }],
+  });
+
+  const url = new URL(DISCORD_URL);
+  const req = https.request(
+    { hostname: url.hostname, port: 443, path: url.pathname + url.search, method: "POST",
+      headers: { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(discordBody) } },
+    (res) => { console.log(`[Discord] Resolution notification sent, status: ${res.statusCode}`); }
+  );
+  req.on("error", (e) => console.error("[Discord] Error:", e.message));
+  req.write(discordBody);
+  req.end();
+}
+
+function triggerPostIncidentCanvas(alert: Alert, result: InvestigationResult): void {
+  if (!SUPERPLANE_POST_INCIDENT_WEBHOOK_URL) return;
+
+  const body = JSON.stringify({
+    service: alert.service,
+    severity: alert.severity,
+    fix_applied: result.fix_applied,
+    root_cause: result.root_cause,
+    proposed_fix: result.proposed_fix,
+    mttr_seconds: result.mttr_seconds,
+    postmortem: result.postmortem,
+    actions_taken: result.actions_taken,
+    timestamp: new Date().toISOString(),
+  });
+
+  const url = new URL(SUPERPLANE_POST_INCIDENT_WEBHOOK_URL);
+  const transport = url.protocol === "https:" ? https : http;
+  const req = transport.request(
+    { hostname: url.hostname, port: url.port || (url.protocol === "https:" ? 443 : 80),
+      path: url.pathname + url.search, method: "POST",
+      headers: { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(body) } },
+    (res) => { console.log(`[SuperPlane] Post-incident canvas triggered, status: ${res.statusCode}`); }
+  );
+  req.on("error", (e) => console.error("[SuperPlane] Post-incident error:", e.message));
+  req.write(body);
+  req.end();
+}
+
 // ─── Start ────────────────────────────────────────────────────────────────────
 
 app.listen(PORT, () => {
@@ -342,4 +473,6 @@ app.listen(PORT, () => {
   console.log(`  GET  /mock/metrics        - mock metrics data for SuperPlane`);
   console.log(`  GET  /mock/deployments    - mock deployment data for SuperPlane`);
   console.log(`  GET  /health              - health check`);
+  console.log(`  POST /post-incident       - SuperPlane post-incident report callback`);
+  console.log(`  POST /rollback            - Execute rollback after human approval`);
 });
