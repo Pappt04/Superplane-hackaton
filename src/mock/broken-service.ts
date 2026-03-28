@@ -8,6 +8,7 @@ app.use(express.json());
 const PORT = parseInt(process.env.MOCK_PORT || "3002", 10);
 const WEBHOOK_SERVER_URL = process.env.WEBHOOK_SERVER_URL || "http://localhost:3000";
 const AGENT_URL = process.env.AGENT_URL || "http://localhost:3001";
+const DEMO_APP_URL = `http://localhost:${process.env.DEMO_APP_PORT || "4000"}`;
 const SERVICE_NAME = "payment-service";
 
 // ─── State ────────────────────────────────────────────────────────────────────
@@ -16,6 +17,17 @@ let isDown = false;
 let isCrashInProgress = false;
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
+
+function callDemoApp(path: string): void {
+  const url = new URL(`${DEMO_APP_URL}${path}`);
+  const req = http.request(
+    { hostname: url.hostname, port: url.port || 4000, path: url.pathname, method: "POST",
+      headers: { "Content-Length": "0" } },
+    () => {}
+  );
+  req.on("error", () => {});
+  req.end();
+}
 
 function setAgentScenario(service: string, status: string): Promise<void> {
   return new Promise((resolve) => {
@@ -199,6 +211,7 @@ app.post("/chaos/scenario-a", async (_req: Request, res: Response) => {
 
   // Tell agent server: this service is "down" (restart will work, 80% chance)
   await setAgentScenario(SERVICE_NAME, "down");
+  callDemoApp("/chaos/memory-leak");
 
   sendGrafanaAlert(
     "critical",
@@ -219,6 +232,7 @@ app.post("/chaos/scenario-b", async (_req: Request, res: Response) => {
 
   // Tell agent server: config_error means restart/rollback will always fail
   await setAgentScenario(SERVICE_NAME, "config_error");
+  callDemoApp("/chaos/config-error");
 
   sendGrafanaAlert(
     "critical",

@@ -1,8 +1,20 @@
 import Groq from "groq-sdk";
+import http from "http";
 import { getLogs } from "../integrations/log-fetcher";
 import { getMetrics, setServiceStatus, getServiceStatus } from "../integrations/metrics-fetcher";
 import { getRecentDeployments } from "../integrations/deployment-fetcher";
 import { InvestigationRequest, InvestigationResult } from "../types";
+
+const DEMO_APP_PORT = process.env.DEMO_APP_PORT || "4000";
+function recoverDemoApp() {
+  const req = http.request(
+    { hostname: "localhost", port: parseInt(DEMO_APP_PORT), path: "/chaos/recover", method: "POST",
+      headers: { "Content-Length": "0" } },
+    () => {}
+  );
+  req.on("error", () => {});
+  req.end();
+}
 
 const client = new Groq({ apiKey: process.env.GROQ_API_KEY });
 
@@ -164,6 +176,7 @@ async function executeTool(name: string, input: Record<string, unknown>): Promis
       const success = Math.random() > 0.2;
       if (success) {
         setServiceStatus(service, "healthy");
+        recoverDemoApp();
         return `✓ ${service} restarted successfully. New instance started, passing health checks.`;
       }
       return `✗ Restart failed - ${service} crashed again immediately (exit code 137). Likely OOM issue persists.`;
@@ -175,6 +188,7 @@ async function executeTool(name: string, input: Record<string, unknown>): Promis
         return `✗ Rollback failed - ${service} still cannot connect to database after rollback. Issue is in environment configuration (DATABASE_URL), not in application code.`;
       }
       setServiceStatus(service, "healthy");
+      recoverDemoApp();
       return `✓ Rolled back ${service} to ${input.version as string}. Deployment complete, service healthy.`;
     }
     case "scale_service": {
