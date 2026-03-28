@@ -148,7 +148,9 @@ async function executeTool(name: string, input: Record<string, unknown>): Promis
     }
     case "run_health_check": {
       await new Promise(r => setTimeout(r, 500 + Math.random() * 500));
-      const healthy = Math.random() > 0.8;
+      const currentStatus = getServiceStatus(service);
+      // Reflect actual service state — healthy/degraded pass, down/config_error fail
+      const healthy = currentStatus === "healthy" || (currentStatus === "degraded" && Math.random() > 0.5);
       return healthy
         ? `✓ Health check OK - ${service} responding in ${80 + Math.floor(Math.random() * 120)}ms`
         : `✗ Health check FAILED - ${service} not responding (connection refused)`;
@@ -218,13 +220,23 @@ Istrazisi incident i pokusaj da ga rijesis. Koristi alate po potrebi.
 
   // Agentic loop
   while (true) {
-    const response = await client.chat.completions.create({
-      model: "llama-3.3-70b-versatile",
-      messages,
-      tools: TOOLS,
-      tool_choice: "auto",
-      max_tokens: 4096,
-    });
+    let response: Groq.Chat.ChatCompletion;
+    try {
+      response = await client.chat.completions.create({
+        model: "llama-3.3-70b-versatile",
+        messages,
+        tools: TOOLS,
+        tool_choice: "auto",
+        max_tokens: 4096,
+      });
+    } catch (err: unknown) {
+      // Groq occasionally returns 400 tool_use_failed when the model generates
+      // malformed tool syntax. Break gracefully and use whatever we have so far.
+      const msg = err instanceof Error ? err.message : String(err);
+      console.log(`\n[WARN] LLM tool call error — breaking loop: ${msg.slice(0, 200)}`);
+      if (!lastText) lastText = "Investigation interrupted due to model tool formatting error. Based on data collected so far, see actions_taken for attempted fixes.";
+      break;
+    }
 
     const message = response.choices[0].message;
     const stopReason = response.choices[0].finish_reason;
