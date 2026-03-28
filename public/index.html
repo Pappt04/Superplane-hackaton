@@ -1,0 +1,387 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AI On-Call Engineer</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: #0d1117;
+    color: #c9d1d9;
+    font-family: 'JetBrains Mono', 'Fira Code', 'Courier New', monospace;
+    font-size: 13px;
+    min-height: 100vh;
+  }
+
+  header {
+    background: #161b22;
+    border-bottom: 1px solid #21262d;
+    padding: 16px 24px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+
+  header h1 {
+    font-size: 16px;
+    color: #58a6ff;
+    letter-spacing: 0.5px;
+  }
+
+  header h1 span { color: #3fb950; }
+
+  .live-dot {
+    width: 8px; height: 8px;
+    background: #3fb950;
+    border-radius: 50%;
+    display: inline-block;
+    margin-right: 6px;
+    animation: pulse 2s infinite;
+  }
+
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.3; }
+  }
+
+  .container { max-width: 1100px; margin: 0 auto; padding: 24px; }
+
+  .stats {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 12px;
+    margin-bottom: 24px;
+  }
+
+  .stat-card {
+    background: #161b22;
+    border: 1px solid #21262d;
+    border-radius: 6px;
+    padding: 16px;
+  }
+
+  .stat-card .label { color: #8b949e; font-size: 11px; margin-bottom: 6px; }
+  .stat-card .value { font-size: 24px; font-weight: bold; }
+  .stat-card .value.green { color: #3fb950; }
+  .stat-card .value.red { color: #f85149; }
+  .stat-card .value.yellow { color: #d29922; }
+  .stat-card .value.blue { color: #58a6ff; }
+
+  .toolbar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 16px;
+  }
+
+  .toolbar h2 { font-size: 14px; color: #8b949e; }
+
+  .btn {
+    background: #21262d;
+    color: #c9d1d9;
+    border: 1px solid #30363d;
+    padding: 8px 16px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-family: inherit;
+    font-size: 12px;
+    transition: all 0.15s;
+  }
+
+  .btn:hover { background: #30363d; border-color: #58a6ff; color: #58a6ff; }
+  .btn.primary { background: #238636; border-color: #2ea043; color: #fff; }
+  .btn.primary:hover { background: #2ea043; }
+
+  .incident-list { display: flex; flex-direction: column; gap: 8px; }
+
+  .incident {
+    background: #161b22;
+    border: 1px solid #21262d;
+    border-radius: 6px;
+    overflow: hidden;
+    transition: border-color 0.2s;
+  }
+
+  .incident:hover { border-color: #30363d; }
+  .incident.investigating { border-left: 3px solid #d29922; }
+  .incident.fixed { border-left: 3px solid #3fb950; }
+  .incident.escalated { border-left: 3px solid #f85149; }
+
+  .incident-header {
+    padding: 12px 16px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    cursor: pointer;
+    user-select: none;
+  }
+
+  .incident-header:hover { background: #1c2128; }
+
+  .badge {
+    font-size: 10px;
+    padding: 2px 8px;
+    border-radius: 12px;
+    font-weight: bold;
+    white-space: nowrap;
+  }
+
+  .badge.investigating { background: #2d2205; color: #d29922; border: 1px solid #d29922; }
+  .badge.fixed         { background: #0f2d0f; color: #3fb950; border: 1px solid #3fb950; }
+  .badge.escalated     { background: #2d0f0f; color: #f85149; border: 1px solid #f85149; }
+
+  .incident-service { color: #58a6ff; font-weight: bold; }
+  .incident-msg { color: #8b949e; flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .incident-time { color: #484f58; font-size: 11px; white-space: nowrap; }
+  .chevron { color: #484f58; transition: transform 0.2s; margin-left: 4px; }
+  .chevron.open { transform: rotate(90deg); }
+
+  .spinner {
+    width: 14px; height: 14px;
+    border: 2px solid #30363d;
+    border-top-color: #d29922;
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+    flex-shrink: 0;
+  }
+
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  .incident-body {
+    display: none;
+    border-top: 1px solid #21262d;
+    padding: 16px;
+  }
+
+  .incident-body.open { display: block; }
+
+  .section-title {
+    color: #8b949e;
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    margin-bottom: 8px;
+    margin-top: 16px;
+  }
+
+  .section-title:first-child { margin-top: 0; }
+
+  .root-cause {
+    background: #1c2128;
+    border: 1px solid #30363d;
+    border-radius: 4px;
+    padding: 10px 12px;
+    color: #c9d1d9;
+    line-height: 1.5;
+  }
+
+  .actions-list { list-style: none; }
+
+  .actions-list li {
+    padding: 4px 0;
+    color: #8b949e;
+    font-size: 11px;
+    border-bottom: 1px solid #21262d;
+  }
+
+  .actions-list li:last-child { border-bottom: none; }
+  .actions-list li::before { content: "▸ "; color: #30363d; }
+
+  .proposed-fix {
+    background: #0f2d0f;
+    border: 1px solid #3fb950;
+    border-radius: 4px;
+    padding: 10px 12px;
+    color: #3fb950;
+    line-height: 1.5;
+    white-space: pre-wrap;
+  }
+
+  .timeline {
+    background: #0d1117;
+    border: 1px solid #21262d;
+    border-radius: 4px;
+    padding: 10px 12px;
+    font-size: 11px;
+    color: #484f58;
+    white-space: pre-wrap;
+    max-height: 200px;
+    overflow-y: auto;
+    line-height: 1.6;
+  }
+
+  .timeline::-webkit-scrollbar { width: 4px; }
+  .timeline::-webkit-scrollbar-track { background: #0d1117; }
+  .timeline::-webkit-scrollbar-thumb { background: #30363d; border-radius: 2px; }
+
+  .empty {
+    text-align: center;
+    padding: 60px 20px;
+    color: #484f58;
+  }
+
+  .empty .icon { font-size: 40px; margin-bottom: 12px; }
+
+  .severity-critical { color: #f85149; }
+  .severity-high { color: #d29922; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>⚡ AI <span>On-Call</span> Engineer</h1>
+  <div style="color: #8b949e; font-size: 11px;">
+    <span class="live-dot"></span>LIVE
+  </div>
+</header>
+
+<div class="container">
+
+  <div class="stats">
+    <div class="stat-card">
+      <div class="label">TOTAL INCIDENTS</div>
+      <div class="value blue" id="stat-total">0</div>
+    </div>
+    <div class="stat-card">
+      <div class="label">INVESTIGATING</div>
+      <div class="value yellow" id="stat-investigating">0</div>
+    </div>
+    <div class="stat-card">
+      <div class="label">AUTO-FIXED</div>
+      <div class="value green" id="stat-fixed">0</div>
+    </div>
+    <div class="stat-card">
+      <div class="label">ESCALATED</div>
+      <div class="value red" id="stat-escalated">0</div>
+    </div>
+  </div>
+
+  <div class="toolbar">
+    <h2>// INCIDENT FEED</h2>
+    <div style="display: flex; gap: 8px;">
+      <select class="btn" id="service-select" style="padding: 8px 12px;">
+        <option value="">Random service</option>
+        <option value="payment-service">payment-service</option>
+        <option value="api-gateway">api-gateway</option>
+        <option value="user-service">user-service</option>
+      </select>
+      <button class="btn primary" onclick="triggerDemo()">⚡ Trigger Incident</button>
+    </div>
+  </div>
+
+  <div class="incident-list" id="incident-list">
+    <div class="empty" id="empty-state">
+      <div class="icon">🛡️</div>
+      <div>All systems operational</div>
+      <div style="margin-top: 8px; font-size: 11px;">Trigger a demo incident to see AI investigation in action</div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+  const incidents = new Map();
+
+  function timeAgo(iso) {
+    const diff = Math.floor((Date.now() - new Date(iso)) / 1000);
+    if (diff < 60) return `${diff}s ago`;
+    if (diff < 3600) return `${Math.floor(diff/60)}m ago`;
+    return `${Math.floor(diff/3600)}h ago`;
+  }
+
+  function updateStats() {
+    const all = [...incidents.values()];
+    document.getElementById('stat-total').textContent = all.length;
+    document.getElementById('stat-investigating').textContent = all.filter(i => i.status === 'investigating').length;
+    document.getElementById('stat-fixed').textContent = all.filter(i => i.status === 'fixed').length;
+    document.getElementById('stat-escalated').textContent = all.filter(i => i.status === 'escalated').length;
+  }
+
+  function renderIncident(inc) {
+    const existing = document.getElementById(`inc-${inc.id}`);
+    const isOpen = existing?.querySelector('.incident-body')?.classList.contains('open');
+
+    const statusLabel = { investigating: 'INVESTIGATING', fixed: 'AUTO-FIXED', escalated: 'ESCALATED' }[inc.status];
+    const spinner = inc.status === 'investigating' ? '<div class="spinner"></div>' : '';
+
+    let body = '';
+    if (inc.result) {
+      const actions = (inc.result.actions_taken || [])
+        .map(a => `<li>${a.split('->')[0].trim()}</li>`).join('');
+
+      body = `
+        <div class="section-title">Root Cause</div>
+        <div class="root-cause">${inc.result.root_cause || '—'}</div>
+
+        ${actions ? `<div class="section-title">Actions Taken (${inc.result.actions_taken.length})</div>
+        <ul class="actions-list">${actions}</ul>` : ''}
+
+        ${!inc.result.fix_applied && inc.result.proposed_fix ? `
+        <div class="section-title">⚠ Proposed Fix for Engineer</div>
+        <div class="proposed-fix">${inc.result.proposed_fix}</div>` : ''}
+
+        <div class="section-title">Timeline</div>
+        <div class="timeline">${inc.result.full_timeline || '—'}</div>
+      `;
+    } else if (inc.status === 'investigating') {
+      body = `<div style="color: #d29922; padding: 8px 0;">AI is analyzing the incident...</div>`;
+    }
+
+    const html = `
+      <div class="incident ${inc.status}" id="inc-${inc.id}">
+        <div class="incident-header" onclick="toggleBody('${inc.id}')">
+          ${spinner}
+          <span class="badge ${inc.status}">${statusLabel}</span>
+          <span class="incident-service">${inc.alert.service}</span>
+          <span class="incident-msg">${inc.alert.message}</span>
+          <span class="incident-time">${timeAgo(inc.startedAt)}</span>
+          <span class="chevron ${isOpen ? 'open' : ''}">▶</span>
+        </div>
+        <div class="incident-body ${isOpen ? 'open' : ''}">${body}</div>
+      </div>
+    `;
+
+    if (existing) {
+      existing.outerHTML = html;
+    } else {
+      const empty = document.getElementById('empty-state');
+      if (empty) empty.remove();
+      document.getElementById('incident-list').insertAdjacentHTML('afterbegin', html);
+    }
+  }
+
+  function toggleBody(id) {
+    const el = document.getElementById(`inc-${id}`);
+    const body = el?.querySelector('.incident-body');
+    const chevron = el?.querySelector('.chevron');
+    body?.classList.toggle('open');
+    chevron?.classList.toggle('open');
+  }
+
+  function triggerDemo() {
+    const service = document.getElementById('service-select').value;
+    fetch('/demo/trigger', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ service: service || undefined }),
+    });
+  }
+
+  // SSE
+  const es = new EventSource('/events');
+  es.onmessage = (e) => {
+    const inc = JSON.parse(e.data);
+    incidents.set(inc.id, inc);
+    renderIncident(inc);
+    updateStats();
+  };
+
+  // Osvjezi vremena svake minute
+  setInterval(() => {
+    incidents.forEach(inc => renderIncident(inc));
+  }, 60_000);
+</script>
+</body>
+</html>

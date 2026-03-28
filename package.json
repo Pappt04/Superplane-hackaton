@@ -5,8 +5,9 @@
   "main": "index.js",
   "scripts": {
     "dev:agent": "nodemon --exec ts-node src/agent/server.ts",
+    "dev": "nodemon --exec ts-node src/dashboard/server.ts",
     "build": "tsc",
-    "start": "node dist/agent/server.js"
+    "start": "node dist/dashboard/server.js"
   },
   "repository": {
     "type": "git",
