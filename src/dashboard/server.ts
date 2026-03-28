@@ -1,12 +1,6 @@
 import "dotenv/config";
 import express, { Request, Response } from "express";
 import path from "path";
-import { investigateIncident } from "../agent/incident-investigator";
-import { getLogs } from "../integrations/log-fetcher";
-import { getMetrics } from "../integrations/metrics-fetcher";
-import { getRecentDeployments } from "../integrations/deployment-fetcher";
-import { store } from "./incident-store";
-import { Alert, InvestigationRequest } from "../types";
 
 const app = express();
 app.use(express.json());
