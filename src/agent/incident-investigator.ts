@@ -1,10 +1,10 @@
-import Anthropic from "@anthropic-ai/sdk";
+import Groq from "groq-sdk";
 import { getLogs } from "../integrations/log-fetcher";
 import { getMetrics, setServiceStatus } from "../integrations/metrics-fetcher";
 import { getRecentDeployments } from "../integrations/deployment-fetcher";
 import { InvestigationRequest, InvestigationResult } from "../types";
 
-const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+const client = new Groq({ apiKey: process.env.GROQ_API_KEY });
 
 const SYSTEM_PROMPT = `Ti si AI dezurni inzenjer. Istrazujes production incidente metodicno i konzervativno.
 
@@ -17,100 +17,119 @@ Tvoj proces:
 
 Budi koncizan ali precizan. Svaka akcija mora biti opravdana dokazima.`;
 
-const TOOLS: Anthropic.Tool[] = [
+const TOOLS: Groq.Chat.ChatCompletionTool[] = [
   {
-    name: "get_logs",
-    description: "Dohvati error logove servisa za zadati vremenski period",
-    input_schema: {
-      type: "object",
-      properties: {
-        service: { type: "string", description: "Naziv servisa" },
-        minutes: { type: "number", description: "Koliko minuta unazad (default: 30)" },
+    type: "function",
+    function: {
+      name: "get_logs",
+      description: "Dohvati error logove servisa za zadati vremenski period",
+      parameters: {
+        type: "object",
+        properties: {
+          service: { type: "string", description: "Naziv servisa" },
+          minutes: { type: "number", description: "Koliko minuta unazad (default: 30)" },
+        },
+        required: ["service"],
       },
-      required: ["service"],
     },
   },
   {
-    name: "get_metrics",
-    description: "Dohvati trenutne metrike servisa: CPU, memory, error rate, latency",
-    input_schema: {
-      type: "object",
-      properties: {
-        service: { type: "string", description: "Naziv servisa" },
+    type: "function",
+    function: {
+      name: "get_metrics",
+      description: "Dohvati trenutne metrike servisa: CPU, memory, error rate, latency",
+      parameters: {
+        type: "object",
+        properties: {
+          service: { type: "string", description: "Naziv servisa" },
+        },
+        required: ["service"],
       },
-      required: ["service"],
     },
   },
   {
-    name: "get_recent_deployments",
-    description: "Dohvati listu nedavnih deploymenta za servis",
-    input_schema: {
-      type: "object",
-      properties: {
-        service: { type: "string", description: "Naziv servisa" },
-        hours: { type: "number", description: "Koliko sati unazad (default: 24)" },
+    type: "function",
+    function: {
+      name: "get_recent_deployments",
+      description: "Dohvati listu nedavnih deploymenta za servis",
+      parameters: {
+        type: "object",
+        properties: {
+          service: { type: "string", description: "Naziv servisa" },
+          hours: { type: "number", description: "Koliko sati unazad (default: 24)" },
+        },
+        required: ["service"],
       },
-      required: ["service"],
     },
   },
   {
-    name: "run_health_check",
-    description: "Provjeri da li servis odgovara na health check endpoint",
-    input_schema: {
-      type: "object",
-      properties: {
-        service: { type: "string", description: "Naziv servisa" },
+    type: "function",
+    function: {
+      name: "run_health_check",
+      description: "Provjeri da li servis odgovara na health check endpoint",
+      parameters: {
+        type: "object",
+        properties: {
+          service: { type: "string", description: "Naziv servisa" },
+        },
+        required: ["service"],
       },
-      required: ["service"],
     },
   },
   {
-    name: "restart_service",
-    description: "Restartuj servis. Bezbijedna opcija, ne gubi podatke. 80% sansa uspjeha.",
-    input_schema: {
-      type: "object",
-      properties: {
-        service: { type: "string", description: "Naziv servisa za restart" },
+    type: "function",
+    function: {
+      name: "restart_service",
+      description: "Restartuj servis. Bezbijedna opcija, ne gubi podatke. 80% sansa uspjeha.",
+      parameters: {
+        type: "object",
+        properties: {
+          service: { type: "string", description: "Naziv servisa za restart" },
+        },
+        required: ["service"],
       },
-      required: ["service"],
     },
   },
   {
-    name: "rollback_deployment",
-    description: "Rollbackuj servis na prethodnu verziju deploymenta",
-    input_schema: {
-      type: "object",
-      properties: {
-        service: { type: "string", description: "Naziv servisa" },
-        version: { type: "string", description: "Verzija na koju rollbackujemo (npr. v1.11.2)" },
+    type: "function",
+    function: {
+      name: "rollback_deployment",
+      description: "Rollbackuj servis na prethodnu verziju deploymenta",
+      parameters: {
+        type: "object",
+        properties: {
+          service: { type: "string", description: "Naziv servisa" },
+          version: { type: "string", description: "Verzija na koju rollbackujemo (npr. v1.11.2)" },
+        },
+        required: ["service", "version"],
       },
-      required: ["service", "version"],
     },
   },
   {
-    name: "scale_service",
-    description: "Promijeni broj instanci servisa (scale up/down)",
-    input_schema: {
-      type: "object",
-      properties: {
-        service: { type: "string", description: "Naziv servisa" },
-        replicas: { type: "number", description: "Broj instanci" },
+    type: "function",
+    function: {
+      name: "scale_service",
+      description: "Promijeni broj instanci servisa (scale up/down)",
+      parameters: {
+        type: "object",
+        properties: {
+          service: { type: "string", description: "Naziv servisa" },
+          replicas: { type: "number", description: "Broj instanci" },
+        },
+        required: ["service", "replicas"],
       },
-      required: ["service", "replicas"],
     },
   },
 ];
 
-// Izvrsavanje alata
 async function executeTool(name: string, input: Record<string, unknown>): Promise<string> {
   const service = input.service as string;
 
   switch (name) {
     case "get_logs": {
       const logs = await getLogs(service, (input.minutes as number) || 30);
-      return JSON.stringify(logs.map(l => `[${l.timestamp}] ${l.level}: ${l.message}`).join("\n"));
+      return logs.map(l => `[${l.timestamp}] ${l.level}: ${l.message}`).join("\n");
     }
-
     case "get_metrics": {
       const metrics = await getMetrics(service);
       return JSON.stringify({
@@ -121,46 +140,37 @@ async function executeTool(name: string, input: Record<string, unknown>): Promis
         req_per_min: Math.round(metrics.request_count_per_min),
       });
     }
-
     case "get_recent_deployments": {
       const deployments = await getRecentDeployments(service, (input.hours as number) || 24);
-      return JSON.stringify(deployments.map(d =>
+      return deployments.map(d =>
         `[${d.timestamp}] ${d.version} by ${d.author}: "${d.commit_message}" (${d.status})`
-      ).join("\n"));
+      ).join("\n");
     }
-
     case "run_health_check": {
       await new Promise(r => setTimeout(r, 500 + Math.random() * 500));
-      // Servis je pao - health check fails, ali nakon restart/rollback moze proci
       const healthy = Math.random() > 0.8;
       return healthy
         ? `✓ Health check OK - ${service} responding in ${80 + Math.floor(Math.random() * 120)}ms`
         : `✗ Health check FAILED - ${service} not responding (connection refused)`;
     }
-
     case "restart_service": {
       await new Promise(r => setTimeout(r, 2000 + Math.random() * 2000));
-      const success = Math.random() > 0.2; // 80% success
+      const success = Math.random() > 0.2;
       if (success) {
         setServiceStatus(service, "healthy");
         return `✓ ${service} restarted successfully. New instance started, passing health checks.`;
       }
       return `✗ Restart failed - ${service} crashed again immediately (exit code 137). Likely OOM issue persists.`;
     }
-
     case "rollback_deployment": {
       await new Promise(r => setTimeout(r, 3000 + Math.random() * 2000));
-      const version = input.version as string;
       setServiceStatus(service, "healthy");
-      return `✓ Rolled back ${service} to ${version}. Deployment complete, service healthy.`;
+      return `✓ Rolled back ${service} to ${input.version as string}. Deployment complete, service healthy.`;
     }
-
     case "scale_service": {
       await new Promise(r => setTimeout(r, 1500 + Math.random() * 1000));
-      const replicas = input.replicas as number;
-      return `✓ Scaled ${service} to ${replicas} replicas. New instances starting up.`;
+      return `✓ Scaled ${service} to ${input.replicas as number} replicas. New instances starting up.`;
     }
-
     default:
       return `Unknown tool: ${name}`;
   }
@@ -169,7 +179,11 @@ async function executeTool(name: string, input: Record<string, unknown>): Promis
 export async function investigateIncident(request: InvestigationRequest): Promise<InvestigationResult> {
   const { alert, context } = request;
 
-  const userMessage = `
+  const messages: Groq.Chat.ChatCompletionMessageParam[] = [
+    { role: "system", content: SYSTEM_PROMPT },
+    {
+      role: "user",
+      content: `
 Incident alert: ${alert.message}
 Service: ${alert.service}
 Severity: ${alert.severity}
@@ -180,117 +194,73 @@ Pre-fetched context:
 - Metrics: CPU ${context.metrics.cpu_percent.toFixed(0)}%, Memory ${context.metrics.memory_percent.toFixed(0)}%, Error rate ${(context.metrics.error_rate * 100).toFixed(0)}%
 - Recent deployments: ${context.deployments.length} in last 24h, latest: "${context.deployments.slice(-1)[0]?.commit_message || "none"}"
 
-Istrazisi incident i pokusaj da ga rijesIS. Koristi alate po potrebi.
-`.trim();
-
-  const messages: Anthropic.MessageParam[] = [
-    { role: "user", content: userMessage },
+Istrazisi incident i pokusaj da ga rijesis. Koristi alate po potrebi.
+`.trim(),
+    },
   ];
 
   const actionsTaken: string[] = [];
   const timelineEntries: string[] = [`[START] Incident detected: ${alert.message}`];
   let fixApplied = false;
+  let lastText = "";
 
   console.log(`\n${"=".repeat(60)}`);
   console.log(`AI INVESTIGATION: ${alert.service} - ${alert.severity}`);
   console.log("=".repeat(60));
 
-  // Manuel agentic loop
+  // Agentic loop
   while (true) {
-    const stream = await client.messages.create({
-      model: "claude-opus-4-6",
-      max_tokens: 4096,
-      thinking: { type: "adaptive" },
-      system: SYSTEM_PROMPT,
-      tools: TOOLS,
+    const response = await client.chat.completions.create({
+      model: "llama-3.3-70b-versatile",
       messages,
-      stream: true,
+      tools: TOOLS,
+      tool_choice: "auto",
+      max_tokens: 4096,
     });
 
-    let fullText = "";
-    const toolUseBlocks: Anthropic.ToolUseBlock[] = [];
-    let currentToolUse: Partial<Anthropic.ToolUseBlock> & { input_json: string } | null = null;
-    let stopReason = "";
+    const message = response.choices[0].message;
+    const stopReason = response.choices[0].finish_reason;
 
-    for await (const event of stream) {
-      if (event.type === "content_block_start") {
-        if (event.content_block.type === "tool_use") {
-          currentToolUse = {
-            type: "tool_use",
-            id: event.content_block.id,
-            name: event.content_block.name,
-            input: {},
-            input_json: "",
-          };
-        }
-      } else if (event.type === "content_block_delta") {
-        if (event.delta.type === "text_delta") {
-          process.stdout.write(event.delta.text);
-          fullText += event.delta.text;
-        } else if (event.delta.type === "input_json_delta" && currentToolUse) {
-          currentToolUse.input_json += event.delta.partial_json;
-        }
-      } else if (event.type === "content_block_stop") {
-        if (currentToolUse) {
-          currentToolUse.input = JSON.parse(currentToolUse.input_json || "{}");
-          toolUseBlocks.push(currentToolUse as Anthropic.ToolUseBlock);
-          currentToolUse = null;
-        }
-      } else if (event.type === "message_delta") {
-        stopReason = event.delta.stop_reason || "";
-      }
+    if (message.content) {
+      process.stdout.write(message.content + "\n");
+      lastText = message.content;
+      timelineEntries.push(`[AI] ${message.content.trim()}`);
     }
 
-    if (fullText) {
-      timelineEntries.push(`[AI] ${fullText.trim()}`);
-    }
+    messages.push(message);
 
-    // Dohvati cijeli response za messages historiju
-    const assistantContent: Anthropic.MessageParam["content"] = [];
-    if (fullText) (assistantContent as Anthropic.ContentBlockParam[]).push({ type: "text", text: fullText });
-    for (const tb of toolUseBlocks) (assistantContent as Anthropic.ContentBlockParam[]).push(tb);
-
-    messages.push({ role: "assistant", content: assistantContent });
-
-    if (stopReason === "end_turn" || toolUseBlocks.length === 0) {
+    if (stopReason === "stop" || !message.tool_calls || message.tool_calls.length === 0) {
       break;
     }
 
-    // Izvrsi alate
-    const toolResults: Anthropic.ToolResultBlockParam[] = [];
-    for (const tool of toolUseBlocks) {
-      console.log(`\n[TOOL] ${tool.name}(${JSON.stringify(tool.input)})`);
-      const result = await executeTool(tool.name, tool.input as Record<string, unknown>);
-      console.log(`[RESULT] ${result}\n`);
+    // Izvrsi tool calls
+    for (const tc of message.tool_calls) {
+      const input = JSON.parse(tc.function.arguments) as Record<string, unknown>;
+      console.log(`\n[TOOL] ${tc.function.name}(${tc.function.arguments})`);
 
-      const actionLine = `${tool.name}(${JSON.stringify(tool.input)}) -> ${result.slice(0, 100)}`;
+      const result = await executeTool(tc.function.name, input);
+      console.log(`[RESULT] ${result.slice(0, 150)}\n`);
+
+      const actionLine = `${tc.function.name}(${tc.function.arguments}) -> ${result.slice(0, 100)}`;
       actionsTaken.push(actionLine);
       timelineEntries.push(`[ACTION] ${actionLine}`);
 
-      if ((tool.name === "restart_service" || tool.name === "rollback_deployment") && result.startsWith("✓")) {
+      if ((tc.function.name === "restart_service" || tc.function.name === "rollback_deployment") && result.startsWith("✓")) {
         fixApplied = true;
       }
 
-      toolResults.push({
-        type: "tool_result",
-        tool_use_id: tool.id,
+      messages.push({
+        role: "tool",
+        tool_call_id: tc.id,
         content: result,
       });
     }
-
-    messages.push({ role: "user", content: toolResults });
   }
 
-  // Izvuci zakljucak iz posljednje AI poruke
-  const lastMessage = messages.filter(m => m.role === "assistant").slice(-1)[0];
-  const lastText = Array.isArray(lastMessage?.content)
-    ? lastMessage.content.filter((b): b is Anthropic.TextBlock => b.type === "text").map(b => b.text).join("")
-    : "";
-
   const rootCauseMatch = lastText.match(/root.?cause[:\s]+([^\n.]+)/i);
-  const proposedFixMatch = lastText.match(/predlaz[^\n]+fix[:\s]+([^\n]+)/i) ||
+  const proposedFixMatch = lastText.match(/predlaz[^\n]+[:\s]+([^\n]+)/i) ||
                            lastText.match(/preporuc[^\n]+[:\s]+([^\n]+)/i) ||
-                           lastText.match(/sledeci korak[:\s]+([^\n]+)/i);
+                           lastText.match(/next step[:\s]+([^\n]+)/i);
 
   console.log(`\n${"=".repeat(60)}`);
   console.log(`INVESTIGATION COMPLETE - fix_applied: ${fixApplied}`);

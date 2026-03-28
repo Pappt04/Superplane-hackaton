@@ -10,7 +10,7 @@
     "dev:dashboard": "nodemon --exec ts-node src/dashboard/server.ts",
     "dev:all": "concurrently -n agent,webhook,mock,dashboard -c blue,green,red,cyan \"npm run dev:agent\" \"npm run dev:webhook\" \"npm run dev:mock\" \"npm run dev:dashboard\"",
     "build": "tsc",
-    "start": "node dist/agent/server.js"
+    "start": "node dist/dashboard/server.js"
   },
   "repository": {
     "type": "git",
@@ -26,8 +26,10 @@
   "homepage": "https://github.com/Pappt04/Superplane-hackaton#readme",
   "dependencies": {
     "@anthropic-ai/sdk": "^0.80.0",
+    "@google/generative-ai": "^0.24.1",
     "dotenv": "^17.3.1",
     "express": "^5.2.1",
+    "groq-sdk": "^1.1.2",
     "typescript": "^6.0.2"
   },
   "devDependencies": {
