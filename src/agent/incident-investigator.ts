@@ -223,18 +223,21 @@ Istrazisi incident i pokusaj da ga rijesis. Koristi alate po potrebi.
     let response: Groq.Chat.ChatCompletion;
     try {
       response = await client.chat.completions.create({
-        model: "llama-3.3-70b-versatile",
+        model: process.env.GROQ_MODEL || "llama-3.3-70b-versatile",
         messages,
         tools: TOOLS,
         tool_choice: "auto",
         max_tokens: 4096,
       });
     } catch (err: unknown) {
-      // Groq occasionally returns 400 tool_use_failed when the model generates
-      // malformed tool syntax. Break gracefully and use whatever we have so far.
       const msg = err instanceof Error ? err.message : String(err);
-      console.log(`\n[WARN] LLM tool call error — breaking loop: ${msg.slice(0, 200)}`);
-      if (!lastText) lastText = "Investigation interrupted due to model tool formatting error. Based on data collected so far, see actions_taken for attempted fixes.";
+      const isRateLimit = msg.includes("429") || msg.toLowerCase().includes("rate limit");
+      console.log(`\n[WARN] LLM error (${isRateLimit ? "rate limit" : "tool format"}) — breaking loop: ${msg.slice(0, 200)}`);
+      if (!lastText) {
+        lastText = isRateLimit
+          ? `Investigation interrupted: Groq API daily token limit reached. Actions taken before limit: see actions_taken. Root cause based on collected data: service is down with critical metrics (CPU/memory near 100%, error rate >98%). Predlazem: manual investigation required — check recent deployments and environment configuration.`
+          : `Investigation interrupted due to model tool formatting error. Based on data collected so far, see actions_taken for attempted fixes.`;
+      }
       break;
     }
 

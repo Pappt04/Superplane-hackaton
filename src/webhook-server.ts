@@ -112,6 +112,10 @@ async function triggerAgentDirectly(alert: Alert): Promise<void> {
     const type = result.fix_applied ? "INCIDENT_RESOLVED" : "INCIDENT_ESCALATED";
     postToDashboard({ type, incidentId, alert, result, timestamp: new Date().toISOString() });
     console.log(`[AGENT] ${type} — fix_applied: ${result.fix_applied}`);
+
+    if (!result.fix_applied) {
+      triggerEscalation({ alert, result }).catch((e) => console.error("[Escalation]", e));
+    }
   } catch (err) {
     const error = err instanceof Error ? err.message : String(err);
     postToDashboard({ type: "INVESTIGATION_FAILED", incidentId, alert, error, timestamp: new Date().toISOString() });
