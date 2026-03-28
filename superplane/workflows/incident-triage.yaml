@@ -1,6 +1,6 @@
 metadata:
   name: "Incident Triage"
-  description: "Receives a Grafana/PagerDuty alert, collects logs, metrics and recent deployments in parallel, then forwards everything to AI Investigation."
+  description: "Receives a Grafana/PagerDuty alert, collects 6 context sources in parallel (logs, metrics, deployments, GitHub diff, infra health, DB stats), then forwards the enriched context to AI Investigation."
   isTemplate: false
 spec:
   nodes:
@@ -11,7 +11,7 @@ spec:
       metadata: null
       position:
         x: 200
-        "y": 400
+        "y": 600
       component: null
       blueprint: null
       trigger:
@@ -21,6 +21,8 @@ spec:
       integration: null
       errorMessage: ""
       warningMessage: ""
+
+    # ── Parallel context fetch: existing sources ──────────────────────────────
 
     - id: "http-get-logs"
       name: "Get Logs"
@@ -33,7 +35,7 @@ spec:
       metadata: null
       position:
         x: 700
-        "y": 200
+        "y": 100
       component:
         name: "http"
       blueprint: null
@@ -55,7 +57,7 @@ spec:
       metadata: null
       position:
         x: 700
-        "y": 400
+        "y": 300
       component:
         name: "http"
       blueprint: null
@@ -77,7 +79,7 @@ spec:
       metadata: null
       position:
         x: 700
-        "y": 600
+        "y": 500
       component:
         name: "http"
       blueprint: null
@@ -88,6 +90,92 @@ spec:
       errorMessage: ""
       warningMessage: ""
 
+    # ── Parallel context fetch: new enrichment sources ────────────────────────
+
+    - id: "http-get-github-diff"
+      name: "Get GitHub Diff"
+      type: "TYPE_COMPONENT"
+      configuration:
+        method: "GET"
+        url: "http://localhost:3000/mock/github-diff?service={{ $[\"Receive Alert\"].data.service }}"
+        successCodes: "2xx"
+        timeoutSeconds: 20
+        # Production: replace url with the real GitHub Compare API call:
+        # https://api.github.com/repos/{env.GITHUB_ORG}/{service}/compare/{base}...{head}
+        # headers:
+        #   Authorization: "Bearer {{ env.GITHUB_TOKEN }}"
+        #   Accept: "application/vnd.github+json"
+        #   X-GitHub-Api-Version: "2022-11-28"
+      metadata: null
+      position:
+        x: 700
+        "y": 700
+      component:
+        name: "http"
+      blueprint: null
+      trigger: null
+      widget: null
+      isCollapsed: false
+      integration: null
+      errorMessage: ""
+      warningMessage: ""
+
+    - id: "http-get-infra-health"
+      name: "Get Infrastructure Health"
+      type: "TYPE_COMPONENT"
+      configuration:
+        method: "GET"
+        url: "http://localhost:3000/mock/infra-health?region={{ env.AWS_REGION }}"
+        successCodes: "2xx"
+        timeoutSeconds: 20
+        # Production: replace url with AWS Health API endpoint
+        # POST https://health.us-east-1.amazonaws.com/
+        # headers:
+        #   Authorization: "AWS Signature v4 — {{ env.AWS_ACCESS_KEY_ID }}"
+        #   Content-Type: "application/x-amz-json-1.1"
+        #   X-Amz-Target: "AmazonHealthAPIService.DescribeEvents"
+      metadata: null
+      position:
+        x: 700
+        "y": 900
+      component:
+        name: "http"
+      blueprint: null
+      trigger: null
+      widget: null
+      isCollapsed: false
+      integration: null
+      errorMessage: ""
+      warningMessage: ""
+
+    - id: "http-get-db-stats"
+      name: "Get Database Statistics"
+      type: "TYPE_COMPONENT"
+      configuration:
+        method: "GET"
+        url: "http://localhost:3000/mock/db-stats?service={{ $[\"Receive Alert\"].data.service }}"
+        successCodes: "2xx"
+        timeoutSeconds: 15
+        # Production: replace url with direct Prometheus query:
+        # {{ env.PROMETHEUS_URL }}/api/v1/query?query=pg_stat_activity_count{service="{{ $["Receive Alert"].data.service }}"}
+        # headers:
+        #   Authorization: "Bearer {{ env.PROMETHEUS_TOKEN }}"
+      metadata: null
+      position:
+        x: 700
+        "y": 1100
+      component:
+        name: "http"
+      blueprint: null
+      trigger: null
+      widget: null
+      isCollapsed: false
+      integration: null
+      errorMessage: ""
+      warningMessage: ""
+
+    # ── Merge all 6 sources ───────────────────────────────────────────────────
+
     - id: "merge-context"
       name: "Merge Context"
       type: "TYPE_COMPONENT"
@@ -96,11 +184,11 @@ spec:
         enableTimeout: true
         executionTimeout:
           unit: "seconds"
-          value: 30
+          value: 45
       metadata: null
       position:
-        x: 1200
-        "y": 400
+        x: 1300
+        "y": 600
       component:
         name: "merge"
       blueprint: null
@@ -110,6 +198,8 @@ spec:
       integration: null
       errorMessage: ""
       warningMessage: ""
+
+    # ── Forward enriched context to AI Investigation ──────────────────────────
 
     - id: "http-forward-to-investigation"
       name: "Forward to AI Investigation"
@@ -132,13 +222,16 @@ spec:
             "context": {
               "logs": {{ $["Get Logs"].data.body }},
               "metrics": {{ $["Get Metrics"].data.body }},
-              "deployments": {{ $["Get Recent Deployments"].data.body }}
+              "deployments": {{ $["Get Recent Deployments"].data.body }},
+              "github_diff": {{ $["Get GitHub Diff"].data.body }},
+              "infra_health": {{ $["Get Infrastructure Health"].data.body }},
+              "db_stats": {{ $["Get Database Statistics"].data.body }}
             }
           }
       metadata: null
       position:
-        x: 1700
-        "y": 400
+        x: 1800
+        "y": 600
       component:
         name: "http"
       blueprint: null
@@ -150,6 +243,7 @@ spec:
       warningMessage: ""
 
   edges:
+    # Trigger → all 6 parallel fetches
     - sourceId: "webhook-trigger-receive-alert"
       targetId: "http-get-logs"
       channel: "default"
@@ -159,6 +253,16 @@ spec:
     - sourceId: "webhook-trigger-receive-alert"
       targetId: "http-get-deployments"
       channel: "default"
+    - sourceId: "webhook-trigger-receive-alert"
+      targetId: "http-get-github-diff"
+      channel: "default"
+    - sourceId: "webhook-trigger-receive-alert"
+      targetId: "http-get-infra-health"
+      channel: "default"
+    - sourceId: "webhook-trigger-receive-alert"
+      targetId: "http-get-db-stats"
+      channel: "default"
+    # All 6 sources → merge
     - sourceId: "http-get-logs"
       targetId: "merge-context"
       channel: "success"
@@ -168,6 +272,16 @@ spec:
     - sourceId: "http-get-deployments"
       targetId: "merge-context"
       channel: "success"
+    - sourceId: "http-get-github-diff"
+      targetId: "merge-context"
+      channel: "success"
+    - sourceId: "http-get-infra-health"
+      targetId: "merge-context"
+      channel: "success"
+    - sourceId: "http-get-db-stats"
+      targetId: "merge-context"
+      channel: "success"
+    # Merge → forward
     - sourceId: "merge-context"
       targetId: "http-forward-to-investigation"
       channel: "success"

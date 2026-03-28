@@ -1,0 +1,75 @@
+name: "AWS Health Dashboard Integration"
+description: |
+  Checks the AWS Health API for open service events in the affected region.
+  Critical for distinguishing between "our code broke" vs "AWS is having an outage".
+  If an AWS RDS/EC2/ECS event is open, the AI can immediately report an external root cause
+  instead of spending time on a fruitless internal investigation.
+
+superplane_component:
+  name: "Get Infrastructure Health"
+  type: "TYPE_COMPONENT"
+  component:
+    name: "http"
+  configuration:
+    method: "POST"
+    url: "https://health.us-east-1.amazonaws.com/"
+    successCodes: "2xx"
+    timeoutSeconds: 20
+    headers:
+      Content-Type: "application/x-amz-json-1.1"
+      X-Amz-Target: "AmazonHealthAPIService.DescribeEvents"
+      # Auth: AWS Signature v4 — must be computed server-side
+      # Use a Lambda/proxy to sign the request, or replace with a public status endpoint
+    body: |
+      {
+        "filter": {
+          "regions": ["{{ env.AWS_REGION }}"],
+          "eventStatusCodes": ["open", "upcoming"],
+          "eventTypeCategories": ["issue", "accountNotification"]
+        },
+        "maxResults": 20
+      }
+
+alternative_public_endpoint:
+  description: "If you don't want to set up AWS Signature v4, use the public status page JSON feed"
+  url: "https://status.aws.amazon.com/data.json"
+  notes:
+    - "No authentication required"
+    - "Returns all current incidents for all services/regions"
+    - "Less precise than the authenticated Health API (no account-specific events)"
+
+aws_health_response_shape:
+  events:
+    - arn: "arn:aws:health:us-east-1::event/RDS/AWS_RDS_OPERATIONAL_ISSUE_123"
+      service: "RDS"
+      eventTypeCode: "AWS_RDS_OPERATIONAL_ISSUE"
+      eventTypeCategory: "issue"
+      region: "us-east-1"
+      startTime: "2026-03-28T10:00:00Z"
+      endTime: null
+      lastUpdatedTime: "2026-03-28T10:15:00Z"
+      statusCode: "open"
+      eventScopeCode: "PUBLIC"
+  eventDetails:
+    - event:
+        arn: "arn:aws:health:us-east-1::event/RDS/AWS_RDS_OPERATIONAL_ISSUE_123"
+      eventDescription:
+        latestDescription: "We are investigating increased latency and error rates for RDS instances in the us-east-1 AZ."
+
+mock_endpoint:
+  url: "GET http://localhost:3000/mock/infra-health?region=us-east-1"
+  returns: "InfraHealth object from src/types/index.ts"
+  notes:
+    - "Mock returns healthy 80% of the time (most incidents are code-related, not AWS)"
+    - "20% chance of a simulated RDS degradation event for realistic demo variation"
+
+why_this_matters:
+  - "Without this check, AI wastes time restarting services during an AWS outage"
+  - "If AWS has an open RDS event, the AI can immediately escalate with 'External root cause: AWS RDS degradation in us-east-1 — wait for AWS resolution'"
+  - "Prevents false rollbacks: a rollback won't fix an AWS infrastructure issue"
+
+environment_variables:
+  AWS_REGION: "us-east-1"
+  AWS_ACCESS_KEY_ID: "AKIA..."
+  AWS_SECRET_ACCESS_KEY: "..."
+  # Or use IAM role on the server — no static credentials needed
