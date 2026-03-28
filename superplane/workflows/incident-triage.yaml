@@ -1,0 +1,173 @@
+metadata:
+  name: "Incident Triage"
+  description: "Receives a Grafana/PagerDuty alert, collects logs, metrics and recent deployments in parallel, then forwards everything to AI Investigation."
+  isTemplate: false
+spec:
+  nodes:
+    - id: "webhook-trigger-receive-alert"
+      name: "Receive Alert"
+      type: "TYPE_TRIGGER"
+      configuration: {}
+      metadata: null
+      position:
+        x: 200
+        "y": 400
+      component: null
+      blueprint: null
+      trigger:
+        name: "webhook"
+      widget: null
+      isCollapsed: false
+      integration: null
+      errorMessage: ""
+      warningMessage: ""
+
+    - id: "http-get-logs"
+      name: "Get Logs"
+      type: "TYPE_COMPONENT"
+      configuration:
+        method: "GET"
+        url: "http://localhost:3000/mock/logs?service={{ $[\"Receive Alert\"].data.service }}&minutes=30"
+        successCodes: "2xx"
+        timeoutSeconds: 15
+      metadata: null
+      position:
+        x: 700
+        "y": 200
+      component:
+        name: "http"
+      blueprint: null
+      trigger: null
+      widget: null
+      isCollapsed: false
+      integration: null
+      errorMessage: ""
+      warningMessage: ""
+
+    - id: "http-get-metrics"
+      name: "Get Metrics"
+      type: "TYPE_COMPONENT"
+      configuration:
+        method: "GET"
+        url: "http://localhost:3000/mock/metrics?service={{ $[\"Receive Alert\"].data.service }}"
+        successCodes: "2xx"
+        timeoutSeconds: 15
+      metadata: null
+      position:
+        x: 700
+        "y": 400
+      component:
+        name: "http"
+      blueprint: null
+      trigger: null
+      widget: null
+      isCollapsed: false
+      integration: null
+      errorMessage: ""
+      warningMessage: ""
+
+    - id: "http-get-deployments"
+      name: "Get Recent Deployments"
+      type: "TYPE_COMPONENT"
+      configuration:
+        method: "GET"
+        url: "http://localhost:3000/mock/deployments?service={{ $[\"Receive Alert\"].data.service }}&hours=24"
+        successCodes: "2xx"
+        timeoutSeconds: 15
+      metadata: null
+      position:
+        x: 700
+        "y": 600
+      component:
+        name: "http"
+      blueprint: null
+      trigger: null
+      widget: null
+      isCollapsed: false
+      integration: null
+      errorMessage: ""
+      warningMessage: ""
+
+    - id: "merge-context"
+      name: "Merge Context"
+      type: "TYPE_COMPONENT"
+      configuration:
+        enableStopIf: false
+        enableTimeout: true
+        executionTimeout:
+          unit: "seconds"
+          value: 30
+      metadata: null
+      position:
+        x: 1200
+        "y": 400
+      component:
+        name: "merge"
+      blueprint: null
+      trigger: null
+      widget: null
+      isCollapsed: false
+      integration: null
+      errorMessage: ""
+      warningMessage: ""
+
+    - id: "http-forward-to-investigation"
+      name: "Forward to AI Investigation"
+      type: "TYPE_COMPONENT"
+      configuration:
+        method: "POST"
+        url: "http://localhost:3000/trigger/investigate"
+        successCodes: "2xx"
+        timeoutSeconds: 10
+        headers:
+          Content-Type: "application/json"
+        body: |
+          {
+            "alert": {
+              "service": "{{ $["Receive Alert"].data.service }}",
+              "severity": "{{ $["Receive Alert"].data.severity }}",
+              "message": "{{ $["Receive Alert"].data.message }}",
+              "timestamp": "{{ $["Receive Alert"].data.timestamp }}"
+            },
+            "context": {
+              "logs": {{ $["Get Logs"].data.body }},
+              "metrics": {{ $["Get Metrics"].data.body }},
+              "deployments": {{ $["Get Recent Deployments"].data.body }}
+            }
+          }
+      metadata: null
+      position:
+        x: 1700
+        "y": 400
+      component:
+        name: "http"
+      blueprint: null
+      trigger: null
+      widget: null
+      isCollapsed: false
+      integration: null
+      errorMessage: ""
+      warningMessage: ""
+
+  edges:
+    - sourceId: "webhook-trigger-receive-alert"
+      targetId: "http-get-logs"
+      channel: "default"
+    - sourceId: "webhook-trigger-receive-alert"
+      targetId: "http-get-metrics"
+      channel: "default"
+    - sourceId: "webhook-trigger-receive-alert"
+      targetId: "http-get-deployments"
+      channel: "default"
+    - sourceId: "http-get-logs"
+      targetId: "merge-context"
+      channel: "success"
+    - sourceId: "http-get-metrics"
+      targetId: "merge-context"
+      channel: "success"
+    - sourceId: "http-get-deployments"
+      targetId: "merge-context"
+      channel: "success"
+    - sourceId: "merge-context"
+      targetId: "http-forward-to-investigation"
+      channel: "success"

@@ -1,0 +1,50 @@
+name: "GitHub Action Integration"
+description: |
+  Fetches recent deployments via GitHub Deployments API.
+  In the demo, this is mocked by GET /mock/deployments on the webhook-server.
+  For production, replace with a real GitHub API call using an HTTP component.
+
+superplane_component:
+  # Use this HTTP node configuration to call the real GitHub API
+  name: "Get Recent Deployments"
+  type: "TYPE_COMPONENT"
+  component:
+    name: "http"
+  configuration:
+    method: "GET"
+    url: "https://api.github.com/repos/{{ env.GITHUB_ORG }}/{{ $[\"Receive Alert\"].data.service }}/deployments?per_page=10"
+    successCodes: "2xx"
+    timeoutSeconds: 15
+    headers:
+      Authorization: "Bearer {{ env.GITHUB_TOKEN }}"
+      Accept: "application/vnd.github+json"
+      X-GitHub-Api-Version: "2022-11-28"
+
+github_deployment_response_shape:
+  # Each item in the array:
+  - id: 123456789
+    sha: "abc123def456"
+    ref: "main"
+    environment: "production"
+    description: "Deploy v2.3.1"
+    creator:
+      login: "deploy-bot"
+    created_at: "2026-03-28T09:30:00Z"
+    updated_at: "2026-03-28T09:32:00Z"
+    statuses_url: "https://api.github.com/repos/org/repo/deployments/123456789/statuses"
+
+mapping_to_deployment_interface:
+  # Maps GitHub response -> Deployment interface in src/types/index.ts
+  version: "ref (e.g. 'main' or tag like 'v2.3.1')"
+  timestamp: "created_at"
+  author: "creator.login"
+  commit_message: "description"
+  status: "latest deployment status (requires additional GET to statuses_url)"
+
+mock_endpoint:
+  # For demo: GET http://localhost:3000/mock/deployments?service=payment-service&hours=24
+  returns: "Array of Deployment objects (src/types/index.ts)"
+
+environment_variables:
+  GITHUB_TOKEN: "ghp_..."
+  GITHUB_ORG: "your-org-name"

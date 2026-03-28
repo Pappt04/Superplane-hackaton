@@ -1,0 +1,66 @@
+metadata:
+  name: "Human Escalation"
+  description: "Sends a Slack Block Kit message to #incidents when the AI agent could not resolve the incident automatically."
+  isTemplate: false
+spec:
+  nodes:
+    - id: "webhook-trigger-escalation"
+      name: "Receive Escalation"
+      type: "TYPE_TRIGGER"
+      configuration: {}
+      metadata: null
+      position:
+        x: 200
+        "y": 400
+      component: null
+      blueprint: null
+      trigger:
+        name: "webhook"
+      widget: null
+      isCollapsed: false
+      integration: null
+      errorMessage: ""
+      warningMessage: ""
+
+    - id: "slack-escalation-message"
+      name: "Post Escalation to Slack"
+      type: "TYPE_COMPONENT"
+      configuration:
+        channel: "#incidents"
+        text: |-
+          🚨 *INCIDENT ESCALATION — Human action required*
+
+          *Service:* `{{ $["Receive Escalation"].data.service }}`
+          *Root Cause:* {{ $["Receive Escalation"].data.root_cause }}
+
+          *What the AI tried:*
+          {{ $["Receive Escalation"].data.actions_taken }}
+
+          *Proposed fix:*
+          {{ $["Receive Escalation"].data.proposed_fix }}
+
+          *AI Confidence:* {{ $["Receive Escalation"].data.confidence }}
+
+          *Full timeline:*
+          {{ $["Receive Escalation"].data.full_timeline }}
+
+          ---
+          _AI On-Call was unable to resolve this automatically. Please investigate immediately._
+      metadata: null
+      position:
+        x: 700
+        "y": 400
+      component:
+        name: "slack.sendTextMessage"
+      blueprint: null
+      trigger: null
+      widget: null
+      isCollapsed: false
+      integration: null
+      errorMessage: ""
+      warningMessage: ""
+
+  edges:
+    - sourceId: "webhook-trigger-escalation"
+      targetId: "slack-escalation-message"
+      channel: "default"

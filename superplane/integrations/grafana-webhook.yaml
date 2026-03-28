@@ -1,0 +1,70 @@
+name: "Grafana Webhook Integration"
+description: |
+  Maps incoming Grafana Alertmanager webhook payload to the Alert interface
+  used by SuperPlane workflows.
+
+  Grafana sends alerts to POST /webhooks/alert on the webhook-server (port 3000).
+  The webhook-server normalizes the payload before forwarding to SuperPlane.
+
+grafana_payload_format:
+  # Example Grafana Alertmanager webhook payload
+  example:
+    receiver: "superplane-webhook"
+    status: "firing"
+    alerts:
+      - status: "firing"
+        labels:
+          alertname: "HighErrorRate"
+          service: "payment-service"
+          severity: "critical"
+          env: "production"
+        annotations:
+          summary: "High error rate detected"
+          description: "Error rate exceeded 10% for payment-service in the last 5 minutes"
+        startsAt: "2026-03-28T10:00:00Z"
+        endsAt: "0001-01-01T00:00:00Z"
+        generatorURL: "http://grafana:3000/alerting/..."
+        fingerprint: "abc123def456"
+
+field_mapping:
+  # Maps Grafana fields -> Alert interface fields
+  service:
+    source: "alerts[0].labels.service"
+    fallback: "alerts[0].labels.alertname"
+    type: "string"
+  severity:
+    source: "alerts[0].labels.severity"
+    allowed_values: ["critical", "high", "medium", "low"]
+    fallback: "high"
+    type: "string"
+  message:
+    source: "alerts[0].annotations.description || alerts[0].annotations.summary"
+    type: "string"
+  timestamp:
+    source: "alerts[0].startsAt"
+    type: "ISO8601 string"
+
+normalized_alert_shape:
+  # Shape sent to SuperPlane incident-triage webhook
+  service: "payment-service"
+  severity: "critical"
+  message: "Error rate exceeded 10% for payment-service in the last 5 minutes"
+  timestamp: "2026-03-28T10:00:00Z"
+
+pagerduty_payload_format:
+  # PagerDuty also sends webhooks — mapped the same way
+  example:
+    messages:
+      - type: "incident.trigger"
+        data:
+          incident:
+            id: "P12345"
+            title: "High error rate on payment-service"
+            urgency: "high"
+            service:
+              name: "payment-service"
+  field_mapping:
+    service: "messages[0].data.incident.service.name"
+    severity: "messages[0].data.incident.urgency"  # high -> high, low -> low
+    message: "messages[0].data.incident.title"
+    timestamp: "(current ISO timestamp)"
