@@ -11,11 +11,16 @@ const DEFAULT_BASELINE: ServiceMetrics = {
   cpu_percent: 30, memory_percent: 50, error_rate: 0.001, latency_p99_ms: 120, request_count_per_min: 200,
 };
 
-// Simulirani status servisa (Osoba 1 ce moci da postavi ovo kroz mock server)
-const serviceStatus: Record<string, "healthy" | "degraded" | "down"> = {};
+// Simulirani status servisa
+// "config_error" = AI ne moze da popravi, treba eskalacija
+const serviceStatus: Record<string, "healthy" | "degraded" | "down" | "config_error"> = {};
 
-export function setServiceStatus(service: string, status: "healthy" | "degraded" | "down") {
+export function setServiceStatus(service: string, status: "healthy" | "degraded" | "down" | "config_error") {
   serviceStatus[service] = status;
+}
+
+export function getServiceStatus(service: string) {
+  return serviceStatus[service] || "down";
 }
 
 export async function getMetrics(service: string): Promise<ServiceMetrics> {

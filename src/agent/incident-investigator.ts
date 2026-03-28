@@ -1,6 +1,6 @@
 import Groq from "groq-sdk";
 import { getLogs } from "../integrations/log-fetcher";
-import { getMetrics, setServiceStatus } from "../integrations/metrics-fetcher";
+import { getMetrics, setServiceStatus, getServiceStatus } from "../integrations/metrics-fetcher";
 import { getRecentDeployments } from "../integrations/deployment-fetcher";
 import { InvestigationRequest, InvestigationResult } from "../types";
 
@@ -155,6 +155,10 @@ async function executeTool(name: string, input: Record<string, unknown>): Promis
     }
     case "restart_service": {
       await new Promise(r => setTimeout(r, 2000 + Math.random() * 2000));
+      // config_error scenario: restart nikada ne pomaze (problem je u konfiguraciji, ne kodu)
+      if (getServiceStatus(service) === "config_error") {
+        return `✗ Restart failed - ${service} cannot start. Error: DATABASE_URL is invalid or unreachable. Configuration issue — restart will not help.`;
+      }
       const success = Math.random() > 0.2;
       if (success) {
         setServiceStatus(service, "healthy");
@@ -164,6 +168,10 @@ async function executeTool(name: string, input: Record<string, unknown>): Promis
     }
     case "rollback_deployment": {
       await new Promise(r => setTimeout(r, 3000 + Math.random() * 2000));
+      // config_error scenario: rollback ne pomaze jer je problem u env varijablama, ne kodu
+      if (getServiceStatus(service) === "config_error") {
+        return `✗ Rollback failed - ${service} still cannot connect to database after rollback. Issue is in environment configuration (DATABASE_URL), not in application code.`;
+      }
       setServiceStatus(service, "healthy");
       return `✓ Rolled back ${service} to ${input.version as string}. Deployment complete, service healthy.`;
     }

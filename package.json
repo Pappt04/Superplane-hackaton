@@ -8,7 +8,9 @@
     "dev:webhook": "nodemon --exec ts-node src/webhook-server.ts",
     "dev:mock": "nodemon --exec ts-node src/mock/broken-service.ts",
     "dev:dashboard": "nodemon --exec ts-node src/dashboard/server.ts",
+    "dev:demo": "nodemon --exec ts-node src/demo-app/app.ts",
     "dev:all": "concurrently -n agent,webhook,mock,dashboard -c blue,green,red,cyan \"npm run dev:agent\" \"npm run dev:webhook\" \"npm run dev:mock\" \"npm run dev:dashboard\"",
+    "dev:full": "concurrently -n agent,webhook,mock,dashboard,demo -c blue,green,red,cyan,magenta \"npm run dev:agent\" \"npm run dev:webhook\" \"npm run dev:mock\" \"npm run dev:dashboard\" \"npm run dev:demo\"",
     "build": "tsc",
     "start": "node dist/dashboard/server.js"
   },

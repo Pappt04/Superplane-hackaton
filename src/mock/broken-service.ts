@@ -7,6 +7,7 @@ app.use(express.json());
 
 const PORT = parseInt(process.env.MOCK_PORT || "3002", 10);
 const WEBHOOK_SERVER_URL = process.env.WEBHOOK_SERVER_URL || "http://localhost:3000";
+const AGENT_URL = process.env.AGENT_URL || "http://localhost:3001";
 const SERVICE_NAME = "payment-service";
 
 // ─── State ────────────────────────────────────────────────────────────────────
@@ -15,6 +16,21 @@ let isDown = false;
 let isCrashInProgress = false;
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
+
+function setAgentScenario(service: string, status: string): Promise<void> {
+  return new Promise((resolve) => {
+    const body = JSON.stringify({ service, status });
+    const url = new URL(`${AGENT_URL}/scenario`);
+    const req = http.request(
+      { hostname: url.hostname, port: url.port || 3001, path: url.pathname, method: "POST",
+        headers: { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(body) } },
+      (res) => { console.log(`[SCENARIO] Agent status set → ${status} (HTTP ${res.statusCode})`); resolve(); }
+    );
+    req.on("error", (e) => { console.error("[SCENARIO] Failed to set agent status:", e.message); resolve(); });
+    req.write(body);
+    req.end();
+  });
+}
 
 function sendGrafanaAlert(severity: "critical" | "high", message: string): void {
   const grafanaPayload = {
@@ -176,6 +192,46 @@ app.post("/chaos/recover", (_req: Request, res: Response) => {
   });
 });
 
+// POST /chaos/scenario-a — memory leak, AI WILL fix (restart succeeds)
+app.post("/chaos/scenario-a", async (_req: Request, res: Response) => {
+  console.log("\n🅰️  [SCENARIO A] Memory leak — AI will fix this via restart");
+  isDown = true;
+
+  // Tell agent server: this service is "down" (restart will work, 80% chance)
+  await setAgentScenario(SERVICE_NAME, "down");
+
+  sendGrafanaAlert(
+    "critical",
+    `FATAL: Out of memory — OOM killer terminated ${SERVICE_NAME} (RSS: 2.1GB, limit: 2GB). Service returning 503. Immediate investigation required.`
+  );
+
+  res.json({
+    ok: true,
+    scenario: "A — memory leak",
+    note: "AI WILL fix this. Restart succeeds with 80% chance, or rollback. Watch Discord for RESOLVED.",
+  });
+});
+
+// POST /chaos/scenario-b — config error, AI CANNOT fix (Discord escalation)
+app.post("/chaos/scenario-b", async (_req: Request, res: Response) => {
+  console.log("\n🅱️  [SCENARIO B] Config error — AI CANNOT fix this, will escalate");
+  isDown = true;
+
+  // Tell agent server: config_error means restart/rollback will always fail
+  await setAgentScenario(SERVICE_NAME, "config_error");
+
+  sendGrafanaAlert(
+    "critical",
+    `CRITICAL: ${SERVICE_NAME} repeatedly crashing on startup. DATABASE_URL environment variable appears misconfigured — connection refused on every attempt. Manual intervention required.`
+  );
+
+  res.json({
+    ok: true,
+    scenario: "B — config error",
+    note: "AI CANNOT fix this. Restart/rollback will fail. Watch Discord for ESCALATION embed with proposed fix.",
+  });
+});
+
 // GET /status — internal state (for debugging)
 app.get("/status", (_req: Request, res: Response) => {
   res.json({
@@ -190,9 +246,11 @@ app.get("/status", (_req: Request, res: Response) => {
 
 app.listen(PORT, () => {
   console.log(`Mock Broken Service (${SERVICE_NAME}) running on http://localhost:${PORT}`);
-  console.log(`  GET  /health       - service health (200 or 503)`);
-  console.log(`  POST /chaos/crash  - force crash + fire Grafana alert`);
-  console.log(`  POST /chaos/recover - recover service`);
-  console.log(`  GET  /status       - internal state`);
-  console.log(`\nService starts HEALTHY. Use POST /chaos/crash to trigger an incident.`);
+  console.log(`  GET  /health              - service health (200 or 503)`);
+  console.log(`  POST /chaos/crash         - generic crash + Grafana alert`);
+  console.log(`  POST /chaos/scenario-a    - Scenario A: memory leak (AI WILL fix)`);
+  console.log(`  POST /chaos/scenario-b    - Scenario B: config error (AI CANNOT fix → Discord)`);
+  console.log(`  POST /chaos/recover       - recover service`);
+  console.log(`  GET  /status              - internal state`);
+  console.log(`\nService starts HEALTHY. Use scenario-a or scenario-b to trigger demo incidents.`);
 });
