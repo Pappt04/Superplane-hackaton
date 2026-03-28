@@ -70,26 +70,38 @@ spec:
       errorMessage: ""
       warningMessage: ""
 
-    - id: "slack-notify-resolved"
-      name: "Notify AI Resolved"
+    - id: "discord-notify-resolved"
+      name: "Notify AI Resolved (Discord)"
       type: "TYPE_COMPONENT"
       configuration:
-        channel: "#incidents"
-        text: |-
-          ✅ *AI On-Call resolved the incident automatically*
-
-          *Service:* {{ $["Receive Investigation Request"].data.alert.service }}
-          *Root cause:* {{ $["Call AI Agent"].data.body.root_cause }}
-          *Actions taken:* {{ $["Call AI Agent"].data.body.actions_taken }}
-          *Confidence:* {{ $["Call AI Agent"].data.body.confidence }}
-
-          _No human intervention required._
+        method: "POST"
+        url: "{{ env.DISCORD_WEBHOOK_URL }}"
+        successCodes: "204"
+        timeoutSeconds: 10
+        headers:
+          Content-Type: "application/json"
+        body: |
+          {
+            "content": "✅ AI automatically resolved an incident",
+            "embeds": [{
+              "title": "Incident Resolved",
+              "description": "The AI on-call agent successfully fixed the issue",
+              "color": 65280,
+              "fields": [
+                {"name": "Service", "value": "{{ $[\"Receive Investigation Request\"].data.alert.service }}", "inline": true},
+                {"name": "Confidence", "value": "{{ $[\"Call AI Agent\"].data.body.confidence }}", "inline": true},
+                {"name": "Root Cause", "value": "{{ $[\"Call AI Agent\"].data.body.root_cause }}"},
+                {"name": "Actions Taken", "value": "{{ $[\"Call AI Agent\"].data.body.actions_taken }}"}
+              ],
+              "footer": {"text": "AI On-Call — No human intervention required"}
+            }]
+          }
       metadata: null
       position:
         x: 1700
         "y": 200
       component:
-        name: "slack.sendTextMessage"
+        name: "http"
       blueprint: null
       trigger: null
       widget: null
@@ -139,7 +151,7 @@ spec:
       targetId: "if-fix-applied"
       channel: "success"
     - sourceId: "if-fix-applied"
-      targetId: "slack-notify-resolved"
+      targetId: "discord-notify-resolved"
       channel: "true"
     - sourceId: "if-fix-applied"
       targetId: "http-escalate-to-human"
