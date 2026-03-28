@@ -1,0 +1,103 @@
+name: "Discord Action Integration"
+description: |
+  Discord webhook notifications for both auto-resolved and human-escalation scenarios.
+  Uses HTTP POST to Discord webhook URL with JSON embed formatting.
+
+component:
+  name: "http"
+  type: "TYPE_COMPONENT"
+  configuration:
+    method: "POST"
+    url: "{{ env.DISCORD_WEBHOOK_URL }}"
+    headers:
+      Content-Type: "application/json"
+    successCodes: "204"
+    timeoutSeconds: 10
+
+discord_webhook_payload:
+  # Discord webhook format with embeds
+  content: "New incident notification"
+  embeds:
+    - title: "AI On-Call — Incident Auto-Resolved"
+      description: "The AI agent successfully resolved the incident"
+      color: 65280  # Green (0x00FF00)
+      fields:
+        - name: "Service"
+          value: "{{ $[\"Receive Investigation Request\"].data.alert.service }}"
+          inline: true
+        - name: "Confidence"
+          value: "{{ $[\"Call AI Agent\"].data.body.confidence }}%"
+          inline: true
+        - name: "Root Cause"
+          value: "{{ $[\"Call AI Agent\"].data.body.root_cause }}"
+          inline: false
+        - name: "Actions Taken"
+          value: "{{ $[\"Call AI Agent\"].data.body.actions_taken }}"
+          inline: false
+      footer:
+        text: "AI On-Call Agent — SuperPlane + Claude"
+        icon_url: "https://cdn-icons-png.flaticon.com/512/4436/4436481.png"
+
+templates:
+  auto_resolved:
+    description: "Sent when AI fixes the incident automatically"
+    payload: |
+      {
+        "content": "✅ AI automatically resolved an incident",
+        "embeds": [{
+          "title": "Incident Resolved",
+          "description": "The AI on-call agent successfully fixed the issue",
+          "color": 65280,
+          "fields": [
+            {"name": "Service", "value": "{{ $[\"Receive Investigation Request\"].data.alert.service }}", "inline": true},
+            {"name": "Confidence", "value": "{{ $[\"Call AI Agent\"].data.body.confidence }}", "inline": true},
+            {"name": "Root Cause", "value": "{{ $[\"Call AI Agent\"].data.body.root_cause }}"},
+            {"name": "Actions Taken", "value": "{{ $[\"Call AI Agent\"].data.body.actions_taken }}"}
+          ],
+          "footer": {"text": "AI On-Call — No human intervention required"}
+        }]
+      }
+
+  human_escalation:
+    description: "Sent when AI cannot fix — requires human action"
+    payload: |
+      {
+        "content": "🚨 INCIDENT ESCALATION — Requires immediate human action",
+        "embeds": [{
+          "title": "Incident Escalated to Human Team",
+          "description": "The AI agent could not automatically resolve this incident",
+          "color": 16711680,
+          "fields": [
+            {"name": "Service", "value": "`{{ $[\"Receive Escalation\"].data.service }}`", "inline": true},
+            {"name": "Severity", "value": "CRITICAL", "inline": true},
+            {"name": "Root Cause", "value": "{{ $[\"Receive Escalation\"].data.root_cause }}"},
+            {"name": "AI Attempted Actions", "value": "{{ $[\"Receive Escalation\"].data.actions_taken }}"},
+            {"name": "Proposed Fix", "value": "{{ $[\"Receive Escalation\"].data.proposed_fix }}"},
+            {"name": "AI Confidence", "value": "{{ $[\"Receive Escalation\"].data.confidence }}", "inline": true}
+          ],
+          "footer": {"text": "AI On-Call — Manual investigation needed"}
+        }]
+      }
+
+discord_setup:
+  steps:
+    - "Create a Discord server or use existing one"
+    - "Create a channel for incidents (e.g. #incidents)"
+    - "Create a webhook: Channel Settings → Integrations → Webhooks → New Webhook"
+    - "Copy the webhook URL"
+    - "Set DISCORD_WEBHOOK_URL in .env with the webhook URL"
+    - "In SuperPlane, configure the HTTP component with the webhook URL from env.DISCORD_WEBHOOK_URL"
+  environment_variables:
+    DISCORD_WEBHOOK_URL: "https://discordapp.com/api/webhooks/YOUR_WEBHOOK_ID/YOUR_WEBHOOK_TOKEN"
+
+discord_color_codes:
+  green_resolved: 65280      # 0x00FF00
+  red_critical: 16711680    # 0xFF0000
+  orange_warning: 16744448  # 0xFFA500
+  blue_info: 3447003        # 0x0099FF
+
+notes:
+  - "Discord embeds are sent as HTTP POST to the webhook URL"
+  - "Color is a decimal value (use decimal color converters online)"
+  - "Max 2000 characters per field"
+  - "Webhook tokens should be kept secret — use environment variables"

@@ -1,6 +1,6 @@
 metadata:
   name: "Human Escalation"
-  description: "Sends a Slack Block Kit message to #incidents when the AI agent could not resolve the incident automatically."
+  description: "Sends a Discord webhook message to #incidents when the AI agent could not resolve the incident automatically."
   isTemplate: false
 spec:
   nodes:
@@ -22,36 +22,40 @@ spec:
       errorMessage: ""
       warningMessage: ""
 
-    - id: "slack-escalation-message"
-      name: "Post Escalation to Slack"
+    - id: "discord-escalation-message"
+      name: "Post Escalation to Discord"
       type: "TYPE_COMPONENT"
       configuration:
-        channel: "#incidents"
-        text: |-
-          🚨 *INCIDENT ESCALATION — Human action required*
-
-          *Service:* `{{ $["Receive Escalation"].data.service }}`
-          *Root Cause:* {{ $["Receive Escalation"].data.root_cause }}
-
-          *What the AI tried:*
-          {{ $["Receive Escalation"].data.actions_taken }}
-
-          *Proposed fix:*
-          {{ $["Receive Escalation"].data.proposed_fix }}
-
-          *AI Confidence:* {{ $["Receive Escalation"].data.confidence }}
-
-          *Full timeline:*
-          {{ $["Receive Escalation"].data.full_timeline }}
-
-          ---
-          _AI On-Call was unable to resolve this automatically. Please investigate immediately._
+        method: "POST"
+        url: "{{ env.DISCORD_WEBHOOK_URL }}"
+        successCodes: "204"
+        timeoutSeconds: 10
+        headers:
+          Content-Type: "application/json"
+        body: |
+          {
+            "content": "🚨 INCIDENT ESCALATION — Requires immediate human action",
+            "embeds": [{
+              "title": "Incident Escalated to Human Team",
+              "description": "The AI agent could not automatically resolve this incident",
+              "color": 16711680,
+              "fields": [
+                {"name": "Service", "value": "`{{ $[\"Receive Escalation\"].data.service }}`", "inline": true},
+                {"name": "Root Cause", "value": "{{ $[\"Receive Escalation\"].data.root_cause }}"},
+                {"name": "AI Attempted Actions", "value": "{{ $[\"Receive Escalation\"].data.actions_taken }}"},
+                {"name": "Proposed Fix", "value": "{{ $[\"Receive Escalation\"].data.proposed_fix }}"},
+                {"name": "AI Confidence", "value": "{{ $[\"Receive Escalation\"].data.confidence }}", "inline": true},
+                {"name": "Full Timeline", "value": "{{ $[\"Receive Escalation\"].data.full_timeline }}"}
+              ],
+              "footer": {"text": "AI On-Call — Manual investigation needed"}
+            }]
+          }
       metadata: null
       position:
         x: 700
         "y": 400
       component:
-        name: "slack.sendTextMessage"
+        name: "http"
       blueprint: null
       trigger: null
       widget: null
@@ -62,5 +66,5 @@ spec:
 
   edges:
     - sourceId: "webhook-trigger-escalation"
-      targetId: "slack-escalation-message"
+      targetId: "discord-escalation-message"
       channel: "default"
