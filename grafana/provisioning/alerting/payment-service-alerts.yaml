@@ -1,0 +1,106 @@
+apiVersion: 1
+
+groups:
+  - orgId: 1
+    name: payment-service
+    folder: SuperPlane
+    interval: 30s
+    rules:
+      - uid: payment-service-down
+        title: PaymentService Down
+        condition: C
+        data:
+          - refId: A
+            datasourceUid: prometheus
+            model:
+              expr: payment_service_up
+              instant: true
+              intervalMs: 1000
+              maxDataPoints: 43200
+              refId: A
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              conditions:
+                - evaluator:
+                    params:
+                      - 1
+                    type: lt
+                  operator:
+                    type: and
+                  query:
+                    params:
+                      - A
+                  reducer:
+                    params: []
+                    type: last
+                  type: query
+              datasource:
+                type: __expr__
+                uid: __expr__
+              expression: A
+              refId: C
+              type: threshold
+        noDataState: NoData
+        execErrState: Error
+        for: 15s
+        annotations:
+          description: >-
+            payment-service is returning 503. OOM killer may have terminated the
+            process. Immediate investigation required.
+          summary: payment-service is DOWN
+        labels:
+          alertname: ServiceDown
+          env: production
+          service: payment-service
+          severity: critical
+        isPaused: false
+
+      - uid: payment-service-high-error-rate
+        title: PaymentService High Error Rate
+        condition: C
+        data:
+          - refId: A
+            datasourceUid: prometheus
+            model:
+              expr: payment_service_error_rate
+              instant: true
+              intervalMs: 1000
+              maxDataPoints: 43200
+              refId: A
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              conditions:
+                - evaluator:
+                    params:
+                      - 0.5
+                    type: gt
+                  operator:
+                    type: and
+                  query:
+                    params:
+                      - A
+                  reducer:
+                    params: []
+                    type: last
+                  type: query
+              datasource:
+                type: __expr__
+                uid: __expr__
+              expression: A
+              refId: C
+              type: threshold
+        noDataState: NoData
+        execErrState: Error
+        for: 30s
+        annotations:
+          description: >-
+            payment-service error rate is above 50%. Service is severely degraded.
+          summary: payment-service high error rate
+        labels:
+          alertname: ServiceHighErrorRate
+          env: production
+          service: payment-service
+          severity: high
+        isPaused: false

@@ -1,4 +1,9 @@
+import https from "https";
 import { Deployment } from "../types";
+
+const GITHUB_TOKEN = process.env.GITHUB_TOKEN;
+const GITHUB_ORG = process.env.GITHUB_ORG || "Pappt04";
+const GITHUB_REPO = process.env.GITHUB_REPO || "Superplane-hackaton";
 
 const AUTHORS = ["marko.nikolic", "ana.petrovic", "stefan.jovic", "lena.kovac", "rade.milic"];
 
@@ -18,13 +23,73 @@ const NORMAL_COMMITS = [
   "style: fix linting warnings",
 ];
 
+function fetchGitHubCommits(org: string, repo: string, since: string): Promise<Deployment[]> {
+  return new Promise((resolve) => {
+    const path = `/repos/${org}/${repo}/commits?per_page=10&since=${since}`;
+    const headers: Record<string, string> = {
+      "User-Agent": "superplane-agent/1.0",
+      "Accept": "application/vnd.github.v3+json",
+    };
+    if (GITHUB_TOKEN) {
+      headers["Authorization"] = `Bearer ${GITHUB_TOKEN}`;
+    }
+
+    const req = https.request(
+      { hostname: "api.github.com", path, method: "GET", headers },
+      (res) => {
+        let data = "";
+        res.on("data", (chunk) => (data += chunk));
+        res.on("end", () => {
+          if (res.statusCode !== 200) {
+            console.warn(`[GitHub API] Status ${res.statusCode} — falling back to simulated data`);
+            resolve([]);
+            return;
+          }
+          try {
+            const commits = JSON.parse(data) as Array<{
+              sha: string;
+              commit: { message: string; author: { name: string; date: string } };
+            }>;
+            const deployments: Deployment[] = commits.map((c, i) => ({
+              version: `${c.sha.slice(0, 7)}`,
+              timestamp: c.commit.author.date,
+              author: c.commit.author.name,
+              commit_message: c.commit.message.split("\n")[0].slice(0, 120),
+              status: "success",
+            }));
+            resolve(deployments);
+          } catch {
+            console.warn("[GitHub API] Parse error — falling back to simulated data");
+            resolve([]);
+          }
+        });
+      }
+    );
+    req.on("error", (e) => {
+      console.warn(`[GitHub API] Request error: ${e.message} — falling back to simulated data`);
+      resolve([]);
+    });
+    req.end();
+  });
+}
+
 export async function getRecentDeployments(service: string, hours: number = 24): Promise<Deployment[]> {
+  const since = new Date(Date.now() - hours * 3_600_000).toISOString();
+
+  // Try real GitHub commits first
+  const real = await fetchGitHubCommits(GITHUB_ORG, GITHUB_REPO, since);
+  if (real.length > 0) {
+    console.log(`[GitHub API] Fetched ${real.length} real commits for ${service}`);
+    return real.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+  }
+
+  // Fallback: simulated deployment history (realistic for demo)
+  console.log(`[GitHub API] Using simulated deployment history for ${service}`);
   await new Promise(r => setTimeout(r, 150 + Math.random() * 250));
 
   const now = new Date();
   const deployments: Deployment[] = [];
 
-  // 3 normalna deploymenta pre incidenta
   for (let i = 3; i > 0; i--) {
     deployments.push({
       version: `v1.${8 + (3 - i)}.${Math.floor(Math.random() * 5)}`,
@@ -35,7 +100,6 @@ export async function getRecentDeployments(service: string, hours: number = 24):
     });
   }
 
-  // Sumnjivi deployment ~15min pre incidenta
   deployments.push({
     version: `v1.12.0`,
     timestamp: new Date(now.getTime() - 15 * 60_000).toISOString(),
@@ -44,6 +108,5 @@ export async function getRecentDeployments(service: string, hours: number = 24):
     status: "success",
   });
 
-  // Sortiramo od najstarijeg ka najnovijem
   return deployments.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
 }

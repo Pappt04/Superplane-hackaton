@@ -1,6 +1,7 @@
 import "dotenv/config";
 import express, { Request, Response } from "express";
 import http from "http";
+import { register, Gauge, Counter } from "prom-client";
 
 const app = express();
 app.use(express.json());
@@ -10,6 +11,35 @@ const WEBHOOK_SERVER_URL = process.env.WEBHOOK_SERVER_URL || "http://localhost:3
 const AGENT_URL = process.env.AGENT_URL || "http://localhost:3001";
 const DEMO_APP_URL = `http://localhost:${process.env.DEMO_APP_PORT || "4000"}`;
 const SERVICE_NAME = "payment-service";
+
+// ─── Prometheus metrics ───────────────────────────────────────────────────────
+
+const metricUp = new Gauge({
+  name: "payment_service_up",
+  help: "1 = healthy, 0 = down",
+});
+const metricErrorRate = new Gauge({
+  name: "payment_service_error_rate",
+  help: "Current error rate (0.0 - 1.0)",
+});
+const metricMemoryMb = new Gauge({
+  name: "payment_service_memory_mb",
+  help: "Simulated RSS memory usage in MB",
+});
+const metricCpuPercent = new Gauge({
+  name: "payment_service_cpu_percent",
+  help: "Simulated CPU usage percent",
+});
+const metricRequestsTotal = new Counter({
+  name: "payment_service_requests_total",
+  help: "Total requests processed",
+});
+
+// Start with healthy values
+metricUp.set(1);
+metricErrorRate.set(0.001);
+metricMemoryMb.set(420);
+metricCpuPercent.set(32);
 
 // ─── State ────────────────────────────────────────────────────────────────────
 
@@ -145,6 +175,10 @@ app.post("/chaos/crash", (_req: Request, res: Response) => {
     isDown = true;
     isCrashInProgress = false;
     console.log("[CHAOS] Service is now DOWN (503)");
+    metricUp.set(0);
+    metricErrorRate.set(0.98);
+    metricMemoryMb.set(2100);
+    metricCpuPercent.set(99);
 
     // Send Grafana-format alert to webhook server
     sendGrafanaAlert(
@@ -165,6 +199,10 @@ app.post("/chaos/recover", (_req: Request, res: Response) => {
   const wasDown = isDown;
   isDown = false;
   isCrashInProgress = false;
+  metricUp.set(1);
+  metricErrorRate.set(0.001);
+  metricMemoryMb.set(420 + Math.random() * 100);
+  metricCpuPercent.set(30 + Math.random() * 15);
 
   console.log("\n✅ [CHAOS] Service recovered — returning 200");
 
@@ -202,6 +240,19 @@ app.post("/chaos/recover", (_req: Request, res: Response) => {
     service: SERVICE_NAME,
     status: "healthy",
   });
+});
+
+// GET /metrics — Prometheus scrape endpoint
+app.get("/metrics", async (_req: Request, res: Response) => {
+  metricRequestsTotal.inc();
+  // Simulate realistic fluctuation when healthy
+  if (!isDown) {
+    metricMemoryMb.set(380 + Math.random() * 80);
+    metricCpuPercent.set(25 + Math.random() * 20);
+    metricErrorRate.set(0.001 + Math.random() * 0.003);
+  }
+  res.set("Content-Type", register.contentType);
+  res.end(await register.metrics());
 });
 
 // POST /chaos/scenario-a — memory leak, AI WILL fix (restart succeeds)
