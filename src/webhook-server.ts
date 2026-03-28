@@ -1,6 +1,7 @@
 import "dotenv/config";
 import express, { Request, Response } from "express";
 import http from "http";
+import https from "https";
 import { getLogs } from "./integrations/log-fetcher";
 import { getMetrics } from "./integrations/metrics-fetcher";
 import { getRecentDeployments } from "./integrations/deployment-fetcher";
@@ -318,8 +319,8 @@ async function triggerEscalation(payload: { alert: Alert; result: InvestigationR
   });
 
   const url = new URL(DISCORD_URL);
-  const req = http.request(
-    { hostname: url.hostname, port: url.port || 443, path: url.pathname + url.search, method: "POST",
+  const req = https.request(
+    { hostname: url.hostname, port: 443, path: url.pathname + url.search, method: "POST",
       headers: { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(discordBody) } },
     (res) => { console.log(`[Discord] Escalation sent, status: ${res.statusCode}`); }
   );
