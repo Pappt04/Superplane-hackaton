@@ -1,10 +1,10 @@
-import { GoogleGenerativeAI, FunctionDeclaration, Tool, Part, SchemaType } from "@google/generative-ai";
+import Groq from "groq-sdk";
 import { getLogs } from "../integrations/log-fetcher";
 import { getMetrics, setServiceStatus } from "../integrations/metrics-fetcher";
 import { getRecentDeployments } from "../integrations/deployment-fetcher";
 import { InvestigationRequest, InvestigationResult } from "../types";
 
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
+const client = new Groq({ apiKey: process.env.GROQ_API_KEY });
 
 const SYSTEM_PROMPT = `Ti si AI dezurni inzenjer. Istrazujes production incidente metodicno i konzervativno.
 
@@ -17,93 +17,111 @@ Tvoj proces:
 
 Budi koncizan ali precizan. Svaka akcija mora biti opravdana dokazima.`;
 
-const FUNCTION_DECLARATIONS: FunctionDeclaration[] = [
+const TOOLS: Groq.Chat.ChatCompletionTool[] = [
   {
-    name: "get_logs",
-    description: "Dohvati error logove servisa za zadati vremenski period",
-    parameters: {
-      type: SchemaType.OBJECT,
-      properties: {
-        service: { type: SchemaType.STRING, description: "Naziv servisa" },
-        minutes: { type: SchemaType.NUMBER, description: "Koliko minuta unazad (default: 30)" },
+    type: "function",
+    function: {
+      name: "get_logs",
+      description: "Dohvati error logove servisa za zadati vremenski period",
+      parameters: {
+        type: "object",
+        properties: {
+          service: { type: "string", description: "Naziv servisa" },
+          minutes: { type: "number", description: "Koliko minuta unazad (default: 30)" },
+        },
+        required: ["service"],
       },
-      required: ["service"],
     },
   },
   {
-    name: "get_metrics",
-    description: "Dohvati trenutne metrike servisa: CPU, memory, error rate, latency",
-    parameters: {
-      type: SchemaType.OBJECT,
-      properties: {
-        service: { type: SchemaType.STRING, description: "Naziv servisa" },
+    type: "function",
+    function: {
+      name: "get_metrics",
+      description: "Dohvati trenutne metrike servisa: CPU, memory, error rate, latency",
+      parameters: {
+        type: "object",
+        properties: {
+          service: { type: "string", description: "Naziv servisa" },
+        },
+        required: ["service"],
       },
-      required: ["service"],
     },
   },
   {
-    name: "get_recent_deployments",
-    description: "Dohvati listu nedavnih deploymenta za servis",
-    parameters: {
-      type: SchemaType.OBJECT,
-      properties: {
-        service: { type: SchemaType.STRING, description: "Naziv servisa" },
-        hours: { type: SchemaType.NUMBER, description: "Koliko sati unazad (default: 24)" },
+    type: "function",
+    function: {
+      name: "get_recent_deployments",
+      description: "Dohvati listu nedavnih deploymenta za servis",
+      parameters: {
+        type: "object",
+        properties: {
+          service: { type: "string", description: "Naziv servisa" },
+          hours: { type: "number", description: "Koliko sati unazad (default: 24)" },
+        },
+        required: ["service"],
       },
-      required: ["service"],
     },
   },
   {
-    name: "run_health_check",
-    description: "Provjeri da li servis odgovara na health check endpoint",
-    parameters: {
-      type: SchemaType.OBJECT,
-      properties: {
-        service: { type: SchemaType.STRING, description: "Naziv servisa" },
+    type: "function",
+    function: {
+      name: "run_health_check",
+      description: "Provjeri da li servis odgovara na health check endpoint",
+      parameters: {
+        type: "object",
+        properties: {
+          service: { type: "string", description: "Naziv servisa" },
+        },
+        required: ["service"],
       },
-      required: ["service"],
     },
   },
   {
-    name: "restart_service",
-    description: "Restartuj servis. Bezbijedna opcija, ne gubi podatke. 80% sansa uspjeha.",
-    parameters: {
-      type: SchemaType.OBJECT,
-      properties: {
-        service: { type: SchemaType.STRING, description: "Naziv servisa za restart" },
+    type: "function",
+    function: {
+      name: "restart_service",
+      description: "Restartuj servis. Bezbijedna opcija, ne gubi podatke. 80% sansa uspjeha.",
+      parameters: {
+        type: "object",
+        properties: {
+          service: { type: "string", description: "Naziv servisa za restart" },
+        },
+        required: ["service"],
       },
-      required: ["service"],
     },
   },
   {
-    name: "rollback_deployment",
-    description: "Rollbackuj servis na prethodnu verziju deploymenta",
-    parameters: {
-      type: SchemaType.OBJECT,
-      properties: {
-        service: { type: SchemaType.STRING, description: "Naziv servisa" },
-        version: { type: SchemaType.STRING, description: "Verzija na koju rollbackujemo (npr. v1.11.2)" },
+    type: "function",
+    function: {
+      name: "rollback_deployment",
+      description: "Rollbackuj servis na prethodnu verziju deploymenta",
+      parameters: {
+        type: "object",
+        properties: {
+          service: { type: "string", description: "Naziv servisa" },
+          version: { type: "string", description: "Verzija na koju rollbackujemo (npr. v1.11.2)" },
+        },
+        required: ["service", "version"],
       },
-      required: ["service", "version"],
     },
   },
   {
-    name: "scale_service",
-    description: "Promijeni broj instanci servisa (scale up/down)",
-    parameters: {
-      type: SchemaType.OBJECT,
-      properties: {
-        service: { type: SchemaType.STRING, description: "Naziv servisa" },
-        replicas: { type: SchemaType.NUMBER, description: "Broj instanci" },
+    type: "function",
+    function: {
+      name: "scale_service",
+      description: "Promijeni broj instanci servisa (scale up/down)",
+      parameters: {
+        type: "object",
+        properties: {
+          service: { type: "string", description: "Naziv servisa" },
+          replicas: { type: "number", description: "Broj instanci" },
+        },
+        required: ["service", "replicas"],
       },
-      required: ["service", "replicas"],
     },
   },
 ];
 
-const TOOLS: Tool[] = [{ functionDeclarations: FUNCTION_DECLARATIONS }];
-
-// Izvrsavanje alata - isti kao prije, ne zavisi od AI SDK-a
 async function executeTool(name: string, input: Record<string, unknown>): Promise<string> {
   const service = input.service as string;
 
@@ -112,7 +130,6 @@ async function executeTool(name: string, input: Record<string, unknown>): Promis
       const logs = await getLogs(service, (input.minutes as number) || 30);
       return logs.map(l => `[${l.timestamp}] ${l.level}: ${l.message}`).join("\n");
     }
-
     case "get_metrics": {
       const metrics = await getMetrics(service);
       return JSON.stringify({
@@ -123,14 +140,12 @@ async function executeTool(name: string, input: Record<string, unknown>): Promis
         req_per_min: Math.round(metrics.request_count_per_min),
       });
     }
-
     case "get_recent_deployments": {
       const deployments = await getRecentDeployments(service, (input.hours as number) || 24);
       return deployments.map(d =>
         `[${d.timestamp}] ${d.version} by ${d.author}: "${d.commit_message}" (${d.status})`
       ).join("\n");
     }
-
     case "run_health_check": {
       await new Promise(r => setTimeout(r, 500 + Math.random() * 500));
       const healthy = Math.random() > 0.8;
@@ -138,7 +153,6 @@ async function executeTool(name: string, input: Record<string, unknown>): Promis
         ? `✓ Health check OK - ${service} responding in ${80 + Math.floor(Math.random() * 120)}ms`
         : `✗ Health check FAILED - ${service} not responding (connection refused)`;
     }
-
     case "restart_service": {
       await new Promise(r => setTimeout(r, 2000 + Math.random() * 2000));
       const success = Math.random() > 0.2;
@@ -148,20 +162,15 @@ async function executeTool(name: string, input: Record<string, unknown>): Promis
       }
       return `✗ Restart failed - ${service} crashed again immediately (exit code 137). Likely OOM issue persists.`;
     }
-
     case "rollback_deployment": {
       await new Promise(r => setTimeout(r, 3000 + Math.random() * 2000));
-      const version = input.version as string;
       setServiceStatus(service, "healthy");
-      return `✓ Rolled back ${service} to ${version}. Deployment complete, service healthy.`;
+      return `✓ Rolled back ${service} to ${input.version as string}. Deployment complete, service healthy.`;
     }
-
     case "scale_service": {
       await new Promise(r => setTimeout(r, 1500 + Math.random() * 1000));
-      const replicas = input.replicas as number;
-      return `✓ Scaled ${service} to ${replicas} replicas. New instances starting up.`;
+      return `✓ Scaled ${service} to ${input.replicas as number} replicas. New instances starting up.`;
     }
-
     default:
       return `Unknown tool: ${name}`;
   }
@@ -170,15 +179,11 @@ async function executeTool(name: string, input: Record<string, unknown>): Promis
 export async function investigateIncident(request: InvestigationRequest): Promise<InvestigationResult> {
   const { alert, context } = request;
 
-  const model = genAI.getGenerativeModel({
-    model: "gemini-2.0-flash",
-    tools: TOOLS,
-    systemInstruction: SYSTEM_PROMPT,
-  });
-
-  const chat = model.startChat({ history: [] });
-
-  const userMessage = `
+  const messages: Groq.Chat.ChatCompletionMessageParam[] = [
+    { role: "system", content: SYSTEM_PROMPT },
+    {
+      role: "user",
+      content: `
 Incident alert: ${alert.message}
 Service: ${alert.service}
 Severity: ${alert.severity}
@@ -190,7 +195,9 @@ Pre-fetched context:
 - Recent deployments: ${context.deployments.length} in last 24h, latest: "${context.deployments.slice(-1)[0]?.commit_message || "none"}"
 
 Istrazisi incident i pokusaj da ga rijesis. Koristi alate po potrebi.
-`.trim();
+`.trim(),
+    },
+  ];
 
   const actionsTaken: string[] = [];
   const timelineEntries: string[] = [`[START] Incident detected: ${alert.message}`];
@@ -201,68 +208,59 @@ Istrazisi incident i pokusaj da ga rijesis. Koristi alate po potrebi.
   console.log(`AI INVESTIGATION: ${alert.service} - ${alert.severity}`);
   console.log("=".repeat(60));
 
-  let currentMessage: string | Part[] = userMessage;
-
   // Agentic loop
   while (true) {
-    // Streaming za prvi tekst, obican za tool rezultate
-    const streamResult = await chat.sendMessageStream(currentMessage);
+    const response = await client.chat.completions.create({
+      model: "llama-3.3-70b-versatile",
+      messages,
+      tools: TOOLS,
+      tool_choice: "auto",
+      max_tokens: 4096,
+    });
 
-    let fullText = "";
-    for await (const chunk of streamResult.stream) {
-      const text = chunk.text();
-      if (text) {
-        process.stdout.write(text);
-        fullText += text;
-      }
+    const message = response.choices[0].message;
+    const stopReason = response.choices[0].finish_reason;
+
+    if (message.content) {
+      process.stdout.write(message.content + "\n");
+      lastText = message.content;
+      timelineEntries.push(`[AI] ${message.content.trim()}`);
     }
 
-    if (fullText) {
-      lastText = fullText;
-      timelineEntries.push(`[AI] ${fullText.trim()}`);
+    messages.push(message);
+
+    if (stopReason === "stop" || !message.tool_calls || message.tool_calls.length === 0) {
+      break;
     }
 
-    // Dohvati kompletan response da provjerimo function calls
-    const response = await streamResult.response;
-    const functionCalls = response.functionCalls();
+    // Izvrsi tool calls
+    for (const tc of message.tool_calls) {
+      const input = JSON.parse(tc.function.arguments) as Record<string, unknown>;
+      console.log(`\n[TOOL] ${tc.function.name}(${tc.function.arguments})`);
 
-    if (!functionCalls || functionCalls.length === 0) {
-      break; // Nema vise tool poziva - zavrsena istraga
-    }
-
-    // Izvrsi sve function calls i spremi rezultate
-    const functionResponseParts: Part[] = [];
-
-    for (const fc of functionCalls) {
-      const input = fc.args as Record<string, unknown>;
-      console.log(`\n[TOOL] ${fc.name}(${JSON.stringify(input)})`);
-
-      const result = await executeTool(fc.name, input);
+      const result = await executeTool(tc.function.name, input);
       console.log(`[RESULT] ${result.slice(0, 150)}\n`);
 
-      const actionLine = `${fc.name}(${JSON.stringify(input)}) -> ${result.slice(0, 100)}`;
+      const actionLine = `${tc.function.name}(${tc.function.arguments}) -> ${result.slice(0, 100)}`;
       actionsTaken.push(actionLine);
       timelineEntries.push(`[ACTION] ${actionLine}`);
 
-      if ((fc.name === "restart_service" || fc.name === "rollback_deployment") && result.startsWith("✓")) {
+      if ((tc.function.name === "restart_service" || tc.function.name === "rollback_deployment") && result.startsWith("✓")) {
         fixApplied = true;
       }
 
-      functionResponseParts.push({
-        functionResponse: {
-          name: fc.name,
-          response: { result },
-        },
+      messages.push({
+        role: "tool",
+        tool_call_id: tc.id,
+        content: result,
       });
     }
-
-    currentMessage = functionResponseParts;
   }
 
   const rootCauseMatch = lastText.match(/root.?cause[:\s]+([^\n.]+)/i);
   const proposedFixMatch = lastText.match(/predlaz[^\n]+[:\s]+([^\n]+)/i) ||
                            lastText.match(/preporuc[^\n]+[:\s]+([^\n]+)/i) ||
-                           lastText.match(/sledeci korak[:\s]+([^\n]+)/i);
+                           lastText.match(/next step[:\s]+([^\n]+)/i);
 
   console.log(`\n${"=".repeat(60)}`);
   console.log(`INVESTIGATION COMPLETE - fix_applied: ${fixApplied}`);
