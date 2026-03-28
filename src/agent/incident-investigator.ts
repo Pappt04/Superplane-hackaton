@@ -290,10 +290,10 @@ Istrazisi incident i pokusaj da ga rijesis. Koristi alate po potrebi.
   console.log("=".repeat(60) + "\n");
 
   return {
-    root_cause: rootCauseMatch?.[1]?.trim() || lastText.slice(0, 200),
+    root_cause: rootCauseMatch?.[1]?.trim() || lastText.slice(0, 800),
     actions_taken: actionsTaken,
     fix_applied: fixApplied,
-    proposed_fix: fixApplied ? "" : (proposedFixMatch?.[1]?.trim() || lastText.slice(0, 300)),
+    proposed_fix: fixApplied ? "" : (proposedFixMatch?.[1]?.trim() || lastText.slice(0, 900)),
     confidence: fixApplied ? 0.9 : 0.6,
     full_timeline: timelineEntries.join("\n"),
   };

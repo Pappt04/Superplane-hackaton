@@ -308,9 +308,9 @@ async function triggerEscalation(payload: { alert: Alert; result: InvestigationR
       fields: [
         { name: "Servis", value: `\`${payload.alert.service}\``, inline: true },
         { name: "Severity", value: `\`${payload.alert.severity}\``, inline: true },
-        { name: "Root Cause", value: payload.result.root_cause.slice(0, 500) },
+        { name: "Root Cause", value: payload.result.root_cause.slice(0, 1000) || "—" },
         { name: "Sta je AI pokusao", value: actionsList || "—" },
-        { name: "Predlozeni fix", value: `\`\`\`${payload.result.proposed_fix.slice(0, 800)}\`\`\`` },
+        { name: "Predlozeni fix", value: payload.result.proposed_fix.slice(0, 1000) || "—" },
         { name: "Confidence", value: `${Math.round(payload.result.confidence * 100)}%`, inline: true },
       ],
       timestamp: new Date().toISOString(),
