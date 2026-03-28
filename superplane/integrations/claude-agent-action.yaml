@@ -1,0 +1,67 @@
+name: "Claude Agent Action Integration"
+description: |
+  HTTP action that calls our Claude AI agent for autonomous incident investigation.
+  The agent is built with the Anthropic SDK and runs at localhost:3001.
+
+superplane_component:
+  name: "Call AI Agent"
+  type: "TYPE_COMPONENT"
+  component:
+    name: "http"
+  configuration:
+    method: "POST"
+    url: "http://localhost:3001/agent/investigate"
+    successCodes: "2xx"
+    timeoutSeconds: 120
+    headers:
+      Content-Type: "application/json"
+
+request_shape:
+  # InvestigationRequest from src/types/index.ts
+  alert:
+    service: "payment-service"
+    severity: "critical"
+    message: "Error rate exceeded threshold"
+    timestamp: "2026-03-28T10:00:00Z"
+  context:
+    logs:
+      - timestamp: "2026-03-28T09:55:00Z"
+        level: "ERROR"
+        message: "Connection pool exhausted"
+        service: "payment-service"
+    metrics:
+      cpu_percent: 95.2
+      memory_percent: 98.1
+      error_rate: 0.97
+      latency_p99_ms: 30000
+      request_count_per_min: 3
+    deployments:
+      - version: "v2.3.1"
+        timestamp: "2026-03-28T08:00:00Z"
+        author: "deploy-bot"
+        commit_message: "Increase connection pool size"
+        status: "success"
+
+response_shape:
+  # InvestigationResult from src/types/index.ts
+  root_cause: "Memory leak in connection pool introduced in v2.3.1"
+  actions_taken:
+    - "Checked health endpoint — service returning 503"
+    - "Analyzed error logs — OOM killer triggered"
+    - "Identified recent deployment v2.3.1 as likely cause"
+    - "Attempted service restart — successful"
+    - "Verified health endpoint — service healthy"
+  fix_applied: true
+  proposed_fix: "Roll back to v2.3.0 if restart does not hold; review connection pool config in v2.3.1"
+  confidence: 0.87
+  full_timeline: "T-30min: healthy. T-10min: WARN on memory. T-8min: ERROR cascade. T-0: OOM. AI restart at T+2min. Healthy at T+3min."
+
+superplane_expression_to_check_fix_applied:
+  # Used in the if-node in ai-investigation.yaml
+  expression: '$["Call AI Agent"].data.body.fix_applied == true'
+
+notes:
+  - "The agent fetches context itself if not provided — SuperPlane provides it for parallelism"
+  - "Timeout is 120s — agent runs an agentic loop with tool calls (restart, rollback, health_check)"
+  - "fix_applied: true means the agent autonomously resolved the incident"
+  - "confidence: 0.0-1.0 — reflects agent certainty in root cause analysis"

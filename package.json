@@ -5,6 +5,10 @@
   "main": "index.js",
   "scripts": {
     "dev:agent": "nodemon --exec ts-node src/agent/server.ts",
+    "dev:webhook": "nodemon --exec ts-node src/webhook-server.ts",
+    "dev:mock": "nodemon --exec ts-node src/mock/broken-service.ts",
+    "dev:dashboard": "nodemon --exec ts-node src/dashboard/server.ts",
+    "dev:all": "concurrently -n agent,webhook,mock,dashboard -c blue,green,red,cyan \"npm run dev:agent\" \"npm run dev:webhook\" \"npm run dev:mock\" \"npm run dev:dashboard\"",
     "build": "tsc",
     "start": "node dist/agent/server.js"
   },
@@ -29,6 +33,7 @@
   "devDependencies": {
     "@types/express": "^5.0.6",
     "@types/node": "^25.5.0",
+    "concurrently": "^9.2.1",
     "nodemon": "^3.1.14",
     "ts-node": "^10.9.2"
   }

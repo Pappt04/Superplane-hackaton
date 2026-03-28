@@ -1,0 +1,146 @@
+metadata:
+  name: "AI Investigation"
+  description: "Receives triage context, calls the Claude AI agent, then either closes the incident (if fix was applied) or escalates to humans."
+  isTemplate: false
+spec:
+  nodes:
+    - id: "webhook-trigger-investigation"
+      name: "Receive Investigation Request"
+      type: "TYPE_TRIGGER"
+      configuration: {}
+      metadata: null
+      position:
+        x: 200
+        "y": 400
+      component: null
+      blueprint: null
+      trigger:
+        name: "webhook"
+      widget: null
+      isCollapsed: false
+      integration: null
+      errorMessage: ""
+      warningMessage: ""
+
+    - id: "http-call-ai-agent"
+      name: "Call AI Agent"
+      type: "TYPE_COMPONENT"
+      configuration:
+        method: "POST"
+        url: "http://localhost:3001/agent/investigate"
+        successCodes: "2xx"
+        timeoutSeconds: 120
+        headers:
+          Content-Type: "application/json"
+        body: |
+          {
+            "alert": {{ $["Receive Investigation Request"].data.alert }},
+            "context": {{ $["Receive Investigation Request"].data.context }}
+          }
+      metadata: null
+      position:
+        x: 700
+        "y": 400
+      component:
+        name: "http"
+      blueprint: null
+      trigger: null
+      widget: null
+      isCollapsed: false
+      integration: null
+      errorMessage: ""
+      warningMessage: ""
+
+    - id: "if-fix-applied"
+      name: "Fix Applied?"
+      type: "TYPE_COMPONENT"
+      configuration:
+        expression: '$["Call AI Agent"].data.body.fix_applied == true'
+      metadata: null
+      position:
+        x: 1200
+        "y": 400
+      component:
+        name: "if"
+      blueprint: null
+      trigger: null
+      widget: null
+      isCollapsed: false
+      integration: null
+      errorMessage: ""
+      warningMessage: ""
+
+    - id: "slack-notify-resolved"
+      name: "Notify AI Resolved"
+      type: "TYPE_COMPONENT"
+      configuration:
+        channel: "#incidents"
+        text: |-
+          ✅ *AI On-Call resolved the incident automatically*
+
+          *Service:* {{ $["Receive Investigation Request"].data.alert.service }}
+          *Root cause:* {{ $["Call AI Agent"].data.body.root_cause }}
+          *Actions taken:* {{ $["Call AI Agent"].data.body.actions_taken }}
+          *Confidence:* {{ $["Call AI Agent"].data.body.confidence }}
+
+          _No human intervention required._
+      metadata: null
+      position:
+        x: 1700
+        "y": 200
+      component:
+        name: "slack.sendTextMessage"
+      blueprint: null
+      trigger: null
+      widget: null
+      isCollapsed: false
+      integration: null
+      errorMessage: ""
+      warningMessage: ""
+
+    - id: "http-escalate-to-human"
+      name: "Escalate to Human"
+      type: "TYPE_COMPONENT"
+      configuration:
+        method: "POST"
+        url: "http://localhost:3000/trigger/escalate"
+        successCodes: "2xx"
+        timeoutSeconds: 10
+        headers:
+          Content-Type: "application/json"
+        body: |
+          {
+            "service": "{{ $["Receive Investigation Request"].data.alert.service }}",
+            "root_cause": "{{ $["Call AI Agent"].data.body.root_cause }}",
+            "actions_taken": {{ $["Call AI Agent"].data.body.actions_taken }},
+            "proposed_fix": "{{ $["Call AI Agent"].data.body.proposed_fix }}",
+            "confidence": {{ $["Call AI Agent"].data.body.confidence }},
+            "full_timeline": "{{ $["Call AI Agent"].data.body.full_timeline }}"
+          }
+      metadata: null
+      position:
+        x: 1700
+        "y": 600
+      component:
+        name: "http"
+      blueprint: null
+      trigger: null
+      widget: null
+      isCollapsed: false
+      integration: null
+      errorMessage: ""
+      warningMessage: ""
+
+  edges:
+    - sourceId: "webhook-trigger-investigation"
+      targetId: "http-call-ai-agent"
+      channel: "default"
+    - sourceId: "http-call-ai-agent"
+      targetId: "if-fix-applied"
+      channel: "success"
+    - sourceId: "if-fix-applied"
+      targetId: "slack-notify-resolved"
+      channel: "true"
+    - sourceId: "if-fix-applied"
+      targetId: "http-escalate-to-human"
+      channel: "false"
