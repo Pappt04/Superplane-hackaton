@@ -4,6 +4,7 @@ import http from "http";
 import { getLogs } from "./integrations/log-fetcher";
 import { getMetrics } from "./integrations/metrics-fetcher";
 import { getRecentDeployments } from "./integrations/deployment-fetcher";
+import { getGitHubDiff, getInfraHealth, getDbStats } from "./integrations/enrichment-fetcher";
 import { Alert, InvestigationRequest, InvestigationResult } from "./types";
 
 const app = express();
@@ -80,13 +81,16 @@ async function triggerAgentDirectly(alert: Alert): Promise<void> {
   postToDashboard({ type: "INVESTIGATION_STARTED", incidentId, alert, timestamp: new Date().toISOString() });
 
   try {
-    const [logs, metrics, deployments] = await Promise.all([
+    const [logs, metrics, deployments, github_diff, infra_health, db_stats] = await Promise.all([
       getLogs(alert.service, 30),
       getMetrics(alert.service),
       getRecentDeployments(alert.service, 24),
+      getGitHubDiff(alert.service),
+      getInfraHealth(process.env.AWS_REGION || "us-east-1"),
+      getDbStats(alert.service),
     ]);
 
-    const body = JSON.stringify({ alert, context: { logs, metrics, deployments } } satisfies InvestigationRequest);
+    const body = JSON.stringify({ alert, context: { logs, metrics, deployments, github_diff, infra_health, db_stats } } satisfies InvestigationRequest);
     const url = new URL(`${AGENT_URL}/agent/investigate`);
 
     const result = await new Promise<InvestigationResult>((resolve, reject) => {
@@ -196,13 +200,16 @@ app.post("/trigger/investigate", async (req: Request, res: Response) => {
     try {
       // If context not provided by SuperPlane, fetch it ourselves
       const context = payload.context || await (async () => {
-        console.log(`[${incidentId}] Fetching context locally...`);
-        const [logs, metrics, deployments] = await Promise.all([
+        console.log(`[${incidentId}] Fetching enriched context locally...`);
+        const [logs, metrics, deployments, github_diff, infra_health, db_stats] = await Promise.all([
           getLogs(alert.service, 30),
           getMetrics(alert.service),
           getRecentDeployments(alert.service, 24),
+          getGitHubDiff(alert.service),
+          getInfraHealth(process.env.AWS_REGION || "us-east-1"),
+          getDbStats(alert.service),
         ]);
-        return { logs, metrics, deployments };
+        return { logs, metrics, deployments, github_diff, infra_health, db_stats };
       })();
 
       const agentBody = JSON.stringify({ alert, context } satisfies InvestigationRequest);
@@ -274,6 +281,24 @@ app.get("/mock/deployments", async (req: Request, res: Response) => {
   res.json(deployments);
 });
 
+app.get("/mock/github-diff", async (req: Request, res: Response) => {
+  const service = String(req.query.service || "payment-service");
+  const diff = await getGitHubDiff(service);
+  res.json(diff);
+});
+
+app.get("/mock/infra-health", async (req: Request, res: Response) => {
+  const region = String(req.query.region || process.env.AWS_REGION || "us-east-1");
+  const health = await getInfraHealth(region);
+  res.json(health);
+});
+
+app.get("/mock/db-stats", async (req: Request, res: Response) => {
+  const service = String(req.query.service || "payment-service");
+  const stats = await getDbStats(service);
+  res.json(stats);
+});
+
 // GET /health
 app.get("/health", (_req: Request, res: Response) => {
   res.json({ status: "ok", service: "webhook-server", port: PORT });
@@ -335,5 +360,8 @@ app.listen(PORT, () => {
   console.log(`  GET  /mock/logs           - mock log data for SuperPlane`);
   console.log(`  GET  /mock/metrics        - mock metrics data for SuperPlane`);
   console.log(`  GET  /mock/deployments    - mock deployment data for SuperPlane`);
+  console.log(`  GET  /mock/github-diff    - mock GitHub diff between last two deploys`);
+  console.log(`  GET  /mock/infra-health   - mock AWS regional health`);
+  console.log(`  GET  /mock/db-stats       - mock Prometheus DB statistics`);
   console.log(`  GET  /health              - health check`);
 });

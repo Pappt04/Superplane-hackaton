@@ -1,0 +1,56 @@
+name: "GitHub Diff Integration"
+description: |
+  Fetches the code diff between the current (failing) deployment and the previous one
+  via the GitHub Compare API. Gives the AI agent the exact code changes to correlate
+  with the incident root cause.
+
+superplane_component:
+  name: "Get GitHub Diff"
+  type: "TYPE_COMPONENT"
+  component:
+    name: "http"
+  configuration:
+    method: "GET"
+    # GitHub Compare API: compares base...head (three-dot diff)
+    url: "https://api.github.com/repos/{{ env.GITHUB_ORG }}/{{ $[\"Receive Alert\"].data.service }}/compare/{{ $[\"Get Recent Deployments\"].data.body[-2].version }}...{{ $[\"Get Recent Deployments\"].data.body[-1].version }}"
+    successCodes: "2xx"
+    timeoutSeconds: 20
+    headers:
+      Authorization: "Bearer {{ env.GITHUB_TOKEN }}"
+      Accept: "application/vnd.github+json"
+      X-GitHub-Api-Version: "2022-11-28"
+
+github_compare_response_shape:
+  url: "https://api.github.com/repos/org/payment-service/compare/v2.2.0...v2.3.1"
+  status: "ahead"
+  ahead_by: 4
+  behind_by: 0
+  commits:
+    - sha: "abc123"
+      commit:
+        message: "Increase DB connection pool size"
+        author:
+          name: "deploy-bot"
+          date: "2026-03-28T08:00:00Z"
+  files:
+    - filename: "src/db/connection-pool.ts"
+      status: "modified"
+      additions: 3
+      deletions: 1
+      patch: "@@ -45,7 +45,7 @@\n-  max: 50,\n+  max: 200,"
+
+mock_endpoint:
+  url: "GET http://localhost:3000/mock/github-diff?service=payment-service"
+  returns: "GitHubDiff object from src/types/index.ts"
+  notes:
+    - "Mock always returns a suspicious diff with a connection pool increase"
+    - "In production, base/head are extracted from the two most recent deployments"
+
+why_this_matters:
+  - "Code diff is often the smoking gun — a config change or new code path that directly caused the incident"
+  - "The AI can correlate log errors (e.g. OOM) with specific lines changed in the diff"
+  - "Removes guesswork: instead of 'rollback might help', AI can say 'line 48 in connection-pool.ts caused this'"
+
+environment_variables:
+  GITHUB_TOKEN: "ghp_..."
+  GITHUB_ORG: "your-org-name"

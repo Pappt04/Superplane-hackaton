@@ -1,0 +1,99 @@
+name: "Prometheus DB Statistics Integration"
+description: |
+  Fetches database-specific metrics from Prometheus/Grafana — metrics that generic CPU/Memory
+  data misses. Focuses on DB-level signals: active connections, lock waits, slow queries,
+  and replication lag. These often reveal the actual failure mode (connection exhaustion,
+  deadlock cascade, replica falling behind) rather than just its symptoms.
+
+superplane_component:
+  name: "Get Database Statistics"
+  type: "TYPE_COMPONENT"
+  component:
+    name: "http"
+  configuration:
+    method: "GET"
+    # Prometheus instant query API — fetches multiple metrics at once via a recording rule,
+    # or call the endpoint per metric and use a merge node.
+    url: "{{ env.PROMETHEUS_URL }}/api/v1/query?query=db_stats_summary%7Bservice%3D%22{{ $[\"Receive Alert\"].data.service }}%22%7D"
+    successCodes: "2xx"
+    timeoutSeconds: 15
+    headers:
+      Authorization: "Bearer {{ env.PROMETHEUS_TOKEN }}"
+
+individual_prometheus_queries:
+  # For granular control, use separate HTTP nodes for each metric (fan-out pattern)
+  active_connections:
+    query: 'pg_stat_activity_count{service="{{ $[\"Receive Alert\"].data.service }}"}'
+    url: "{{ env.PROMETHEUS_URL }}/api/v1/query?query=pg_stat_activity_count"
+  lock_wait_count:
+    query: 'pg_locks_count{mode="ExclusiveLock",service="{{ $[\"Receive Alert\"].data.service }}"}'
+    url: "{{ env.PROMETHEUS_URL }}/api/v1/query?query=pg_locks_count%7Bmode%3D%22ExclusiveLock%22%7D"
+  slow_queries:
+    query: 'increase(pg_stat_statements_total_time_seconds{service="{{ $[\"Receive Alert\"].data.service }}"}[1h])'
+    url: "{{ env.PROMETHEUS_URL }}/api/v1/query?query=increase(pg_stat_statements_total_time_seconds[1h])"
+  replication_lag:
+    query: 'pg_replication_lag{service="{{ $[\"Receive Alert\"].data.service }}"}'
+    url: "{{ env.PROMETHEUS_URL }}/api/v1/query?query=pg_replication_lag"
+  deadlocks:
+    query: 'increase(pg_stat_database_deadlocks{service="{{ $[\"Receive Alert\"].data.service }}"}[1h])'
+    url: "{{ env.PROMETHEUS_URL }}/api/v1/query?query=increase(pg_stat_database_deadlocks[1h])"
+
+prometheus_response_shape:
+  status: "success"
+  data:
+    resultType: "vector"
+    result:
+      - metric:
+          __name__: "pg_stat_activity_count"
+          service: "payment-service"
+          datname: "payments_db"
+        value:
+          - 1711620600   # unix timestamp
+          - "197"        # current active connections (out of 200 max — 98.5% used!)
+
+grafana_datasource_alternative:
+  description: "Use Grafana's proxy API to query Prometheus through Grafana's data source"
+  url: "{{ env.GRAFANA_URL }}/api/datasources/proxy/1/api/v1/query"
+  headers:
+    Authorization: "Bearer {{ env.GRAFANA_API_KEY }}"
+    Content-Type: "application/json"
+  notes:
+    - "Grafana datasource ID (1) may differ in your environment"
+    - "Allows using Grafana's auth rather than direct Prometheus access"
+
+mock_endpoint:
+  url: "GET http://localhost:3000/mock/db-stats?service=payment-service"
+  returns: "DatabaseStats object from src/types/index.ts"
+  notes:
+    - "Mock simulates a DB under stress: 85-99% connection utilization, many lock waits, slow queries 8-18x normal"
+    - "Matches the payment-service incident scenario (connection pool exhaustion)"
+
+key_signals_and_thresholds:
+  connection_utilization_percent:
+    warning: "> 80%"
+    critical: "> 95%"
+    meaning: "Service will start rejecting connections above max_connections"
+  lock_wait_count:
+    warning: "> 10"
+    critical: "> 50"
+    meaning: "Deadlock cascade or long-running transaction blocking others"
+  slow_queries_count_1h:
+    warning: "> 10"
+    critical: "> 50"
+    meaning: "Query plan regression or missing index — often caused by schema changes in recent deploy"
+  replication_lag_ms:
+    warning: "> 500"
+    critical: "> 5000"
+    meaning: "Read replicas serving stale data; writes may be queueing on primary"
+
+why_this_matters:
+  - "Generic CPU/Memory metrics don't tell you *why* the DB is struggling"
+  - "98% connection utilization instantly explains why the service returns 503: no free connections"
+  - "High lock_wait_count points to a deadlock cascade, often caused by a new query pattern in the latest deploy"
+  - "Replication lag indicates writes are overwhelming the primary — may need scale_service action"
+
+environment_variables:
+  PROMETHEUS_URL: "http://prometheus:9090"
+  PROMETHEUS_TOKEN: "prom_..."
+  GRAFANA_URL: "http://grafana:3000"
+  GRAFANA_API_KEY: "glsa_..."
