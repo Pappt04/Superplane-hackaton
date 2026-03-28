@@ -1,0 +1,175 @@
+name: "GitHub Diff Action Integration"
+description: |
+  Fetches code-level context for the AI agent: the actual file changes introduced
+  by the deployment that triggered the incident.
+
+  Flow:
+    1. Get the SHA of the latest deployment (already fetched by github-action.yaml)
+    2. Get the SHA of the previous deployment (second item in the same list)
+    3. Compare the two SHAs to get a unified diff of changed files
+    4. (Optional) fetch the raw file content for files the AI flags as suspicious
+
+  This gives the AI concrete evidence — not just "something changed in v2.3.1"
+  but the exact lines that changed, which functions were modified, and
+  whether the change touches code paths related to the incident (e.g. DB pool
+  config, memory limits, Redis client initialisation).
+
+  Required env vars: GITHUB_TOKEN, GITHUB_ORG, GITHUB_REPO (or derived from service name)
+
+# ─────────────────────────────────────────────────────────────
+# STEP 1: Compare two commits — get the diff
+# Equivalent to: git diff <base_sha>..<head_sha>
+# GitHub Compare API returns list of changed files + patch (unified diff)
+# ─────────────────────────────────────────────────────────────
+compare_commits_action:
+  superplane_component:
+    name: "Get Commit Diff"
+    type: "TYPE_COMPONENT"
+    component:
+      name: "http"
+    configuration:
+      method: "GET"
+      url: "https://api.github.com/repos/{{ env.GITHUB_ORG }}/{{ env.GITHUB_REPO }}/compare/{{ previous_sha }}...{{ head_sha }}"
+      successCodes: "2xx"
+      timeoutSeconds: 15
+      headers:
+        Authorization: "Bearer {{ env.GITHUB_TOKEN }}"
+        Accept: "application/vnd.github+json"
+        X-GitHub-Api-Version: "2022-11-28"
+
+  # previous_sha and head_sha come from the deployments list fetched earlier:
+  #   head_sha     = deployments[0].sha  (latest — the one that caused the incident)
+  #   previous_sha = deployments[1].sha  (the one before it — known-good baseline)
+  sha_source:
+    head_sha:     '$["Get Recent Deployments"].data.body[0].sha'
+    previous_sha: '$["Get Recent Deployments"].data.body[1].sha'
+
+  response_shape:
+    status: "ahead"           # ahead | behind | diverged | identical
+    ahead_by: 3               # number of commits in this deployment
+    total_commits: 3
+    commits:
+      - sha: "abc123"
+        commit:
+          message: "Increase DB connection pool size from 20 to 50"
+          author:
+            name: "Stefan Jovic"
+            date: "2026-03-28T09:00:00Z"
+    files:
+      - filename: "src/db/pool.ts"
+        status: "modified"    # added | modified | removed | renamed
+        additions: 4
+        deletions: 2
+        changes: 6
+        patch: |
+          @@ -18,7 +18,9 @@ export function createPool() {
+          -  max: 20,
+          +  max: 50,
+          +  idleTimeoutMillis: 5000,
+          +  connectionTimeoutMillis: 2000,
+             min: 2,
+      - filename: "src/config/redis.ts"
+        status: "modified"
+        additions: 1
+        deletions: 1
+        changes: 2
+        patch: |
+          @@ -5,7 +5,7 @@ import { createClient } from 'redis';
+          -  socket: { reconnectStrategy: retries => Math.min(retries * 50, 500) }
+          +  socket: { reconnectStrategy: false }
+
+  # Key fields to pass to the AI agent:
+  #   files[].filename  — which files changed
+  #   files[].patch     — the actual unified diff (most valuable for AI)
+  #   commits[].commit.message — what the developer intended
+
+# ─────────────────────────────────────────────────────────────
+# STEP 2 (optional): Fetch raw file content
+# Use when the AI needs full file context, not just the changed lines.
+# e.g. the AI sees a suspicious patch in pool.ts and wants the full file.
+# ─────────────────────────────────────────────────────────────
+get_file_content_action:
+  superplane_component:
+    name: "Get File Content"
+    type: "TYPE_COMPONENT"
+    component:
+      name: "http"
+    configuration:
+      method: "GET"
+      url: "https://api.github.com/repos/{{ env.GITHUB_ORG }}/{{ env.GITHUB_REPO }}/contents/{{ filepath }}?ref={{ head_sha }}"
+      successCodes: "2xx"
+      timeoutSeconds: 10
+      headers:
+        Authorization: "Bearer {{ env.GITHUB_TOKEN }}"
+        Accept: "application/vnd.github.raw+json"   # returns raw file, not base64
+        X-GitHub-Api-Version: "2022-11-28"
+
+  response_shape:
+    # With Accept: application/vnd.github.raw+json the body is the raw file text
+    raw_content: |
+      import { Pool } from 'pg';
+      export function createPool() {
+        return new Pool({ max: 50, idleTimeoutMillis: 5000, ... });
+      }
+
+# ─────────────────────────────────────────────────────────────
+# HOW TO INJECT DIFF INTO THE AI AGENT REQUEST
+# Add a "diff" field alongside logs/metrics/deployments in the
+# body sent to POST /agent/investigate
+# ─────────────────────────────────────────────────────────────
+agent_request_extension:
+  # Extend the existing InvestigationRequest body in ai-investigation.yaml
+  # to include the diff from this action:
+  body_addition: |
+    "diff": {
+      "head_sha": "{{ $[\"Get Recent Deployments\"].data.body[0].sha }}",
+      "previous_sha": "{{ $[\"Get Recent Deployments\"].data.body[1].sha }}",
+      "files_changed": {{ $["Get Commit Diff"].data.body.files | length }},
+      "patches": {{ $["Get Commit Diff"].data.body.files }}
+    }
+
+  # The AI agent should surface this in its investigation prompt.
+  # In src/agent/incident-investigator.ts, add to the userMessage:
+  prompt_addition: |
+    Code diff (latest deployment vs previous):
+    {{ context.diff.patches | map(f => f.filename + ":\n" + f.patch) | join("\n\n") }}
+
+# ─────────────────────────────────────────────────────────────
+# SUPERPLANE WORKFLOW POSITION
+# Insert these two nodes into incident-triage.yaml PARALLEL to
+# http-get-logs / http-get-metrics / http-get-deployments.
+# The merge-context node already waits for all parallel branches.
+# ─────────────────────────────────────────────────────────────
+workflow_integration:
+  insert_after: "webhook-trigger-receive-alert"
+  parallel_with:
+    - "http-get-logs"
+    - "http-get-metrics"
+    - "http-get-deployments"
+  new_nodes:
+    - id: "http-get-commit-diff"
+      name: "Get Commit Diff"
+      type: "TYPE_COMPONENT"
+      component:
+        name: "http"
+      configuration:
+        method: "GET"
+        url: "https://api.github.com/repos/{{ env.GITHUB_ORG }}/{{ env.GITHUB_REPO }}/compare/{{ $[\"webhook-trigger-receive-alert\"].data.previous_sha }}...{{ $[\"webhook-trigger-receive-alert\"].data.head_sha }}"
+        successCodes: "2xx"
+        timeoutSeconds: 15
+        headers:
+          Authorization: "Bearer {{ env.GITHUB_TOKEN }}"
+          Accept: "application/vnd.github+json"
+          X-GitHub-Api-Version: "2022-11-28"
+
+required_env:
+  GITHUB_TOKEN: "ghp_..."      # needs repo:read scope
+  GITHUB_ORG: "your-org-name"
+  GITHUB_REPO: "your-repo-name"  # or derive from alert.service name
+
+notes:
+  - "The Compare API returns up to 300 files and patches up to 20KB per file — sufficient for most incidents"
+  - "patches field contains unified diff format — the AI understands this natively and can reason about which lines introduced a bug"
+  - "If head_sha is unavailable from deployments, fall back to comparing tag names: .../compare/v2.3.0...v2.3.1"
+  - "For monorepos, filter files by service path prefix before sending to the AI to avoid noise"
+  - "The raw file content action is optional — only needed when the AI needs broader context beyond the changed lines"
