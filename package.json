@@ -1,0 +1,35 @@
+{
+  "name": "superplane-hackaton",
+  "version": "1.0.0",
+  "description": "Superplane challenge",
+  "main": "index.js",
+  "scripts": {
+    "dev:agent": "nodemon --exec ts-node src/agent/server.ts",
+    "build": "tsc",
+    "start": "node dist/agent/server.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Pappt04/Superplane-hackaton.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/Pappt04/Superplane-hackaton/issues"
+  },
+  "homepage": "https://github.com/Pappt04/Superplane-hackaton#readme",
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.80.0",
+    "dotenv": "^17.3.1",
+    "express": "^5.2.1",
+    "typescript": "^6.0.2"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.6",
+    "@types/node": "^25.5.0",
+    "nodemon": "^3.1.14",
+    "ts-node": "^10.9.2"
+  }
+}
